@@ -39,9 +39,12 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
   // Search effect
   useEffect(() => {
     const trimmedQuery = debouncedQuery?.trim() ?? ''
+
+    // Always reset searching state when query changes
     if (!trimmedQuery) {
       setSearchResults([])
       setShowDropdown(false)
+      setIsSearching(false)
       return
     }
 
@@ -55,7 +58,8 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
           setShowDropdown(books.length > 0)
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[Onboarding] Search failed:', error)
         if (!controller.signal.aborted) {
           setSearchResults([])
           setShowDropdown(false)
