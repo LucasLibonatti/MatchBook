@@ -134,7 +134,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin text-orange-500 mx-auto mb-4" aria-hidden="true" />
-          <p className="text-slate-600">Preparando suas recomendações...</p>
+          <p className="text-slate-600 dark:text-slate-400">Preparando suas recomendações...</p>
         </div>
       </div>
     )
@@ -147,9 +147,9 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
         animate={{ opacity: 1, y: 0 }}
         className="flex-1 flex flex-col items-center justify-center text-center px-6"
       >
-        <BookOpen className="w-16 h-16 text-slate-300 mb-4" aria-hidden="true" />
-        <h2 className="text-xl font-bold text-slate-800 mb-2">Nenhuma recomendação encontrada</h2>
-        <p className="text-slate-500 mb-6 max-w-md">
+        <BookOpen className="w-16 h-16 text-slate-300 dark:text-slate-600 mb-4" aria-hidden="true" />
+        <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">Nenhuma recomendação encontrada</h2>
+        <p className="text-slate-500 dark:text-slate-400 mb-6 max-w-md">
           Não encontramos livros compatíveis com sua seleção. Tente escolher outros livros favoritos.
         </p>
         <Button variant="secondary" onClick={onRestart}>
@@ -170,7 +170,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
       <motion.div
         className="w-full max-w-md mb-6 flex items-center justify-between"
       >
-        <span className="text-sm text-slate-500">
+        <span className="text-sm text-slate-500 dark:text-slate-400">
           {deck.length > 0 ? `${Math.min(currentIndex + 1, deck.length)} de ${deck.length}` : '0 de 0'}
         </span>
         <div className="flex items-center gap-1">
@@ -179,7 +179,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
               key={i}
               className={`h-1.5 rounded-full transition-all ${
                 i < currentIndex ? 'bg-green-400' :
-                i === currentIndex ? 'bg-orange-500' : 'bg-slate-200'
+                i === currentIndex ? 'bg-orange-500' : 'bg-slate-200 dark:bg-slate-700'
               }`}
               style={{ width: i === currentIndex ? '24px' : '8px' }}
             />
@@ -236,10 +236,10 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
                   exit={{ opacity: 0, scale: 0.5 }}
                   className="absolute top-6 left-6 transform -rotate-6"
                 >
-                  <div className="w-20 h-20 rounded-full border-4 border-green-400 flex items-center justify-center bg-white/90 backdrop-blur-sm">
+                  <div className="w-20 h-20 rounded-full border-4 border-green-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
                     <Heart className="w-8 h-8 text-green-500" aria-hidden="true" />
                   </div>
-                  <p className="text-green-600 font-bold text-lg mt-1">QUERO LER</p>
+                  <p className="text-green-600 dark:text-green-400 font-bold text-lg mt-1">QUERO LER</p>
                 </motion.div>
               )}
               {dragOffset.x < -20 && (
@@ -249,10 +249,10 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
                   exit={{ opacity: 0, scale: 0.5 }}
                   className="absolute top-6 right-6 transform rotate-6"
                 >
-                  <div className="w-20 h-20 rounded-full border-4 border-red-400 flex items-center justify-center bg-white/90 backdrop-blur-sm">
+                  <div className="w-20 h-20 rounded-full border-4 border-red-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
                     <X className="w-8 h-8 text-red-500" aria-hidden="true" />
                   </div>
-                  <p className="text-red-600 font-bold text-lg mt-1">PASSAR</p>
+                  <p className="text-red-600 dark:text-red-400 font-bold text-lg mt-1">PASSAR</p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -274,7 +274,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
           onClick={() => handleSwipe('left')}
           aria-label="Passar"
         >
-          <X className="w-7 h-7 text-slate-400" aria-hidden="true" />
+          <X className="w-7 h-7 text-slate-400 dark:text-slate-500" aria-hidden="true" />
         </Button>
 
         <Button
@@ -318,7 +318,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white rounded-3xl max-w-md w-full max-h-[90vh] overflow-hidden"
+              className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[90vh] overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800"
               onClick={e => e.stopPropagation()}
             >
               <div className="relative aspect-[2/3] overflow-hidden">
@@ -342,19 +342,19 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
 
               <div className="p-6">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 id="match-title" className="text-xl font-bold text-slate-800">
+                  <h3 id="match-title" className="text-xl font-bold text-slate-800 dark:text-slate-100">
                     {showMatchModal.title}
                   </h3>
                   <button
                     onClick={() => setShowMatchModal(null)}
-                    className="text-slate-400 hover:text-slate-600 p-1"
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1"
                     aria-label="Fechar"
                   >
                     <X className="w-6 h-6" aria-hidden="true" />
                   </button>
                 </div>
 
-                <p className="text-slate-600 mb-4">{showMatchModal.authors.join(', ')}</p>
+                <p className="text-slate-600 dark:text-slate-400 mb-4">{showMatchModal.authors.join(', ')}</p>
 
                 <div className="flex flex-wrap gap-2 mb-4">
                   {showMatchModal.categories.slice(0, 3).map((cat, i) => (
@@ -362,7 +362,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
                   ))}
                 </div>
 
-                <p className="text-slate-600 text-sm leading-relaxed mb-6 line-clamp-4">
+                <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed mb-6 line-clamp-4">
                   {showMatchModal.shortDescription}
                 </p>
 

@@ -1,5 +1,5 @@
 import { forwardRef, InputHTMLAttributes, useId } from 'react'
-import { Search, X } from 'lucide-react'
+import { X } from 'lucide-react'
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string
@@ -33,19 +33,21 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
       e.preventDefault()
       e.stopPropagation()
       onChange?.({ currentTarget: { value: '' } } as React.ChangeEvent<HTMLInputElement>)
-      ref.current?.focus()
+      if (ref && typeof ref === 'object') {
+        ref.current?.focus()
+      }
     }
 
     return (
       <div className="w-full">
         {label && (
-          <label htmlFor={id} className="block text-sm font-medium text-slate-700 mb-1.5">
+          <label htmlFor={id} className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
             {label}
           </label>
         )}
         <div className="relative">
           {iconLeft && (
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
               {iconLeft}
             </div>
           )}
@@ -56,12 +58,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             aria-invalid={error ? 'true' : 'false'}
             className={`
               w-full rounded-2xl border transition-all duration-200
-              bg-white text-slate-800 placeholder:text-slate-400
+              bg-white text-slate-800 placeholder:text-slate-400 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500
               focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent
               ${iconLeft ? 'pl-11' : 'pl-4'}
               ${iconRight || clearable ? 'pr-11' : 'pr-4'}
               py-3 text-base
-              ${error ? 'border-red-500' : 'border-slate-200 hover:border-slate-300'}
+              ${error ? 'border-red-500' : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'}
               ${className}
             `}
             {...props}
@@ -72,13 +74,13 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
                 <button
                   type="button"
                   onMouseDown={handleClear}
-                  className="text-slate-400 hover:text-slate-600 transition-colors p-1"
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1"
                   aria-label="Limpar"
                 >
                   <X className="w-5 h-5" aria-hidden="true" />
                 </button>
               ) : (
-                <span className="text-slate-400">{iconRight}</span>
+                <span className="text-slate-400 dark:text-slate-500">{iconRight}</span>
               )}
             </div>
           ) : null}

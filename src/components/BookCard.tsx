@@ -23,7 +23,7 @@ export function BookCard({
     <motion.div
       whileHover={{ y: -4, boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)' }}
       transition={{ duration: 0.2 }}
-      className={`group rounded-3xl overflow-hidden bg-white cursor-pointer ${compact ? 'max-w-xs' : ''}`}
+      className={`group rounded-3xl overflow-hidden bg-white dark:bg-slate-900 cursor-pointer ${compact ? 'max-w-xs' : ''}`}
       onClick={onClick}
     >
       <div className="relative aspect-[2/3] overflow-hidden">
@@ -72,7 +72,7 @@ export function BookCard({
           transition={{ delay: 0.1 }}
           className="mb-3"
         >
-          <h3 className="font-bold text-slate-800 text-lg leading-tight line-clamp-2">
+          <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg leading-tight line-clamp-2">
             {book.title}
           </h3>
         </motion.div>
@@ -81,7 +81,7 @@ export function BookCard({
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="text-slate-600 text-sm mb-3 line-clamp-1"
+          className="text-slate-600 dark:text-slate-400 text-sm mb-3 line-clamp-1"
         >
           {authors}
         </motion.div>
@@ -90,7 +90,7 @@ export function BookCard({
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="flex flex-wrap items-center gap-3 text-sm text-slate-500 mb-3"
+          className="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400 mb-3"
         >
           {year && (
             <span className="flex items-center gap-1">
@@ -120,9 +120,7 @@ export function BookCard({
             className="flex flex-wrap gap-1.5 mb-4"
           >
             {book.categories.slice(0, 3).map((cat, i) => (
-              <Badge key={i} variant="outline" size="sm">
-                {cat}
-              </Badge>
+              <Badge key={i} variant="outline" size="sm">{cat}</Badge>
             ))}
           </motion.div>
         )}
@@ -132,7 +130,7 @@ export function BookCard({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="text-slate-600 text-sm leading-relaxed line-clamp-3 mb-4"
+            className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed line-clamp-3 mb-4"
           >
             {book.shortDescription}
           </motion.p>
@@ -143,7 +141,7 @@ export function BookCard({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.35 }}
-            className="flex items-center justify-between pt-3 border-t border-slate-100"
+            className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800"
           >
             {book.previewLink && (
               <a
@@ -160,7 +158,7 @@ export function BookCard({
               href={book.infoLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-slate-500 hover:text-slate-700 text-sm flex items-center gap-1"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 text-sm flex items-center gap-1"
             >
               <ExternalLink className="w-4 h-4" aria-hidden="true" />
               Mais detalhes

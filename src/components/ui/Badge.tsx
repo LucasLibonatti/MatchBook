@@ -8,11 +8,11 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
   ({ children, variant = 'default', size = 'md', className = '', ...props }, ref) => {
     const variantStyles = {
-      default: 'bg-orange-100 text-orange-700',
-      success: 'bg-green-100 text-green-700',
-      warning: 'bg-amber-100 text-amber-700',
-      danger: 'bg-red-100 text-red-700',
-      outline: 'bg-transparent border-2 border-slate-200 text-slate-600 hover:border-slate-300',
+      default: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+      success: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+      warning: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+      danger: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+      outline: 'bg-transparent border-2 border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-600',
     }
 
     const sizeStyles = {

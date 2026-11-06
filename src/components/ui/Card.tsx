@@ -19,9 +19,9 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
     ref
   ) => {
     const variantStyles = {
-      default: 'bg-white border border-slate-100',
-      outlined: 'bg-white border-2 border-slate-200',
-      elevated: 'bg-white shadow-soft border border-slate-100/50',
+      default: 'bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800',
+      outlined: 'bg-white border-2 border-slate-200 dark:bg-slate-900 dark:border-slate-700',
+      elevated: 'bg-white shadow-soft border border-slate-100/50 dark:bg-slate-900 dark:shadow-slate-900/50 dark:border-slate-800/50',
     }
 
     const paddingStyles = {
