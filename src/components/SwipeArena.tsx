@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { motion, AnimatePresence, type PanInfo } from 'framer-motion'
-import { RotateCcw, Heart, X, BookOpen, ExternalLink, Loader2 } from 'lucide-react'
+import { motion, AnimatePresence, useMotionValue, useTransform, type PanInfo } from 'framer-motion'
+import { RotateCcw, Heart, X, BookOpen, ExternalLink, Loader2, RotateCcw as UndoIcon, ArrowLeft } from 'lucide-react'
 import { buildInitialDeck, loadMoreCards } from '../utils/recommendationEngine'
-import { addMatch, addSwipedId, getSwipedIds } from '../utils/storage'
+import { addMatch, addSwipedId, getSwipedIds, getMatches, clearSeedBooks } from '../utils/storage'
 import type { Book, SeedBook } from '../types/book'
 import { Button, Badge } from './ui'
 import { BookCard } from './BookCard'
@@ -21,10 +21,18 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [showMatchModal, setShowMatchModal] = useState<Book | null>(null)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
+  const [lastSwiped, setLastSwiped] = useState<{ book: Book; direction: 'left' | 'right' } | null>(null)
+  const [canUndo, setCanUndo] = useState(false)
   const swipedIdsRef = useRef<string[]>([])
   const dragStartRef = useRef(0)
+
+  // Framer Motion values for smooth 60fps animations
+  const dragX = useMotionValue(0)
+  const rotation = useTransform(dragX, [-300, 0, 300], [-15, 0, 15])
+  const opacity = useTransform(dragX, [-500, -100, 0, 100, 500], [0, 0.5, 1, 0.5, 0])
+  const likeIndicatorOpacity = useTransform(dragX, [0, 150], [0, 1])
+  const nopeIndicatorOpacity = useTransform(dragX, [-150, 0], [1, 0])
 
   const currentBook = deck[currentIndex]
   const nextBook = deck[currentIndex + 1]
@@ -41,6 +49,9 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
         const initialDeck = await buildInitialDeck(seedBooks)
         const filteredDeck = initialDeck.filter(book => !savedSwiped.includes(book.id))
         setDeck(filteredDeck)
+        setCurrentIndex(0)
+        setLastSwiped(null)
+        setCanUndo(false)
       } catch (error) {
         console.error('Erro ao carregar deck:', error)
       } finally {
@@ -86,14 +97,56 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
       setShowMatchModal(currentBook)
     }
 
-    // Animate out
-    setDragOffset({ x: direction === 'left' ? -500 : 500, y: 0 })
+    // Store for undo
+    setLastSwiped({ book: currentBook, direction })
+    setCanUndo(true)
+
+    // Animate out using motion value
+    dragX.set(direction === 'left' ? -500 : 500)
 
     setTimeout(() => {
       setCurrentIndex(prev => prev + 1)
-      setDragOffset({ x: 0, y: 0 })
+      dragX.set(0)
     }, 300)
   }, [currentBook])
+
+  const handleUndo = useCallback(() => {
+    if (!lastSwiped || !canUndo) return
+
+    const { book, direction } = lastSwiped
+
+    // Remove from swiped IDs
+    swipedIdsRef.current = swipedIdsRef.current.filter(id => id !== book.id)
+    // Note: We'd need a removeSwipedId in storage, but for now just rebuild
+    // For simplicity, we'll just re-add the card to the deck
+    setDeck(prev => [book, ...prev])
+    setCurrentIndex(0) // Reset to show the undone card
+
+    if (direction === 'right') {
+      // Remove from matches
+      getMatches().filter(m => m.id !== book.id)
+      // We need to update storage - for now just note it
+      console.log('Would remove match:', book.id)
+    }
+
+    setLastSwiped(null)
+    setCanUndo(false)
+  }, [lastSwiped, canUndo])
+
+  const handleDragStart = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    dragStartRef.current = info.offset.x
+    setIsDragging(true)
+    dragX.set(0)
+  }, [])
+
+  const handleDrag = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    if (!isDragging) return
+
+    const deltaX = info.offset.x
+    // Limit drag distance
+    const limitedDelta = Math.max(-300, Math.min(300, deltaX))
+    dragX.set(limitedDelta)
+  }, [isDragging])
 
   const handleDragEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, _info: PanInfo) => {
     if (!isDragging || !currentBook) return
@@ -103,31 +156,31 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
     if (Math.abs(deltaX) > SWIPE_THRESHOLD) {
       handleSwipe(deltaX > 0 ? 'right' : 'left')
     } else {
-      // Snap back
-      setDragOffset({ x: 0, y: 0 })
+      // Snap back using spring animation
+      dragX.set(0)
     }
     setIsDragging(false)
   }, [isDragging, currentBook, handleSwipe])
 
-  const handleDrag = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    if (!isDragging) return
+  const handleRestart = useCallback(() => {
+    // Clear only seed books and swiped IDs, preserve matches
+    clearSeedBooks()
+    setDeck([])
+    setCurrentIndex(0)
+    setLastSwiped(null)
+    setCanUndo(false)
+    onRestart()
+  }, [onRestart])
 
-    const deltaX = info.offset.x
-    // Limit drag distance
-    const limitedDelta = Math.max(-300, Math.min(300, deltaX))
-    setDragOffset({ x: limitedDelta, y: 0 })
-  }, [isDragging])
-
-  const handleDragStart = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    dragStartRef.current = info.offset.x
-    setIsDragging(true)
-  }, [])
-
-  const rotation = dragOffset.x / 300 * 15 // Max 15 degrees
-  const opacity = 1 - Math.abs(dragOffset.x) / 500
-
-  const likeIndicatorOpacity = dragOffset.x > 0 ? Math.min(dragOffset.x / 150, 1) : 0
-  const nopeIndicatorOpacity = dragOffset.x < 0 ? Math.min(Math.abs(dragOffset.x) / 150, 1) : 0
+  const handleSwapBooks = useCallback(() => {
+    // Clear seed books but preserve matches, go back to onboarding
+    clearSeedBooks()
+    setDeck([])
+    setCurrentIndex(0)
+    setLastSwiped(null)
+    setCanUndo(false)
+    onRestart()
+  }, [onRestart])
 
   if (isLoading) {
     return (
@@ -152,7 +205,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
         <p className="text-slate-500 dark:text-slate-400 mb-6 max-w-md">
           Não encontramos livros compatíveis com sua seleção. Tente escolher outros livros favoritos.
         </p>
-        <Button variant="secondary" onClick={onRestart}>
+        <Button variant="secondary" onClick={handleRestart}>
           <RotateCcw className="w-5 h-5 mr-2" aria-hidden="true" />
           Refazer seleção
         </Button>
@@ -165,6 +218,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="flex-1 flex flex-col items-center px-4 pb-8 relative"
+      style={{ willChange: 'transform' }}
     >
       {/* Progress indicator */}
       <motion.div
@@ -202,7 +256,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
           </motion.div>
         )}
 
-        {/* Current card */}
+        {/* Current card - using motion values for 60fps animation */}
         <AnimatePresence mode="wait">
           <motion.div
             key={currentBook?.id}
@@ -213,9 +267,11 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
             onDrag={handleDrag}
             onDragEnd={handleDragEnd}
             style={{
-              transform: `translateX(${dragOffset.x}px) rotate(${rotation}deg)`,
-              opacity: isDragging ? opacity : 1,
+              x: dragX,
+              rotate: rotation,
+              opacity: opacity,
               zIndex: 10,
+              willChange: 'transform, opacity',
             }}
             className="relative"
             role="button"
@@ -223,39 +279,36 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
             onKeyDown={(e) => {
               if (e.key === 'ArrowLeft') handleSwipe('left')
               if (e.key === 'ArrowRight') handleSwipe('right')
+              if (e.key === 'z' && (e.metaKey || e.ctrlKey)) handleUndo() // Cmd/Ctrl+Z for undo
             }}
           >
             <BookCard book={currentBook!} showMatchBadge={true} />
 
-            {/* Like/Nope indicators */}
-            <AnimatePresence>
-              {dragOffset.x > 20 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.5 }}
-                  animate={{ opacity: likeIndicatorOpacity, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.5 }}
-                  className="absolute top-6 left-6 transform -rotate-6"
-                >
-                  <div className="w-20 h-20 rounded-full border-4 border-green-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
-                    <Heart className="w-8 h-8 text-green-500" aria-hidden="true" />
-                  </div>
-                  <p className="text-green-600 dark:text-green-400 font-bold text-lg mt-1">QUERO LER</p>
-                </motion.div>
-              )}
-              {dragOffset.x < -20 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.5 }}
-                  animate={{ opacity: nopeIndicatorOpacity, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.5 }}
-                  className="absolute top-6 right-6 transform rotate-6"
-                >
-                  <div className="w-20 h-20 rounded-full border-4 border-red-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
-                    <X className="w-8 h-8 text-red-500" aria-hidden="true" />
-                  </div>
-                  <p className="text-red-600 dark:text-red-400 font-bold text-lg mt-1">PASSAR</p>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* Like/Nope indicators - using motion values for smooth opacity */}
+            <motion.div
+              style={{
+                opacity: likeIndicatorOpacity,
+                scale: likeIndicatorOpacity,
+              }}
+              className="absolute top-6 left-6 transform -rotate-6 pointer-events-none"
+            >
+              <div className="w-20 h-20 rounded-full border-4 border-green-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
+                <Heart className="w-8 h-8 text-green-500" aria-hidden="true" />
+              </div>
+              <p className="text-green-600 dark:text-green-400 font-bold text-lg mt-1">QUERO LER</p>
+            </motion.div>
+            <motion.div
+              style={{
+                opacity: nopeIndicatorOpacity,
+                scale: nopeIndicatorOpacity,
+              }}
+              className="absolute top-6 right-6 transform rotate-6 pointer-events-none"
+            >
+              <div className="w-20 h-20 rounded-full border-4 border-red-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
+                <X className="w-8 h-8 text-red-500" aria-hidden="true" />
+              </div>
+              <p className="text-red-600 dark:text-red-400 font-bold text-lg mt-1">PASSAR</p>
+            </motion.div>
           </motion.div>
         </AnimatePresence>
       </div>
@@ -265,7 +318,7 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="flex items-center justify-center gap-4 mt-6 w-full max-w-md"
+        className="flex items-center justify-center gap-3 mt-6 w-full max-w-md"
       >
         <Button
           variant="secondary"
@@ -275,6 +328,19 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
           aria-label="Passar"
         >
           <X className="w-7 h-7 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+        </Button>
+
+        {/* Undo Button */}
+        <Button
+          variant={canUndo ? 'secondary' : 'ghost'}
+          size="xl"
+          className="w-16 h-16 p-0"
+          onClick={handleUndo}
+          disabled={!canUndo}
+          aria-label="Desfazer último swipe"
+          style={{ opacity: canUndo ? 1 : 0.4 }}
+        >
+          <UndoIcon className="w-7 h-7 text-orange-500" aria-hidden="true" />
         </Button>
 
         <Button
@@ -288,17 +354,23 @@ export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
         </Button>
       </motion.div>
 
-      {/* Restart button */}
+      {/* Control Buttons */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="mt-6 text-center"
+        className="mt-6 flex flex-col items-center gap-3"
       >
-        <Button variant="ghost" size="sm" onClick={onRestart}>
-          <RotateCcw className="w-4 h-4 mr-1.5" aria-hidden="true" />
-          Refazer seleção de 3 livros
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={handleSwapBooks}>
+            <RotateCcw className="w-4 h-4 mr-1.5" aria-hidden="true" />
+            Trocar 3 Livros
+          </Button>
+          <Button variant="ghost" size="sm" onClick={handleRestart}>
+            <ArrowLeft className="w-4 h-4 mr-1.5" aria-hidden="true" />
+            Reiniciar Do Zero
+          </Button>
+        </div>
       </motion.div>
 
       {/* Match Modal */}

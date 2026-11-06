@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, ChevronRight, BookOpen, Sparkles, Loader2, Trash2, Star, Zap } from 'lucide-react'
-import { searchBooks } from '../services/googleBooks'
+import { searchBooks, FALLBACK_BOOKS } from '../services/googleBooks'
 import { saveSeedBooks, getSeedBooks, setCompletedOnboarding } from '../utils/storage'
 import { useDebounce } from '../hooks'
 import type { Book, SeedBook } from '../types/book'
@@ -16,19 +16,23 @@ const LOADING_MESSAGES = [
   'Quase lá...',
 ]
 
-// Popular book suggestions for quick picks
+// Popular book suggestions for quick picks - with real cover URLs
 const POPULAR_SUGGESTIONS = [
-  { title: '1984', author: 'George Orwell' },
-  { title: 'Dom Casmurro', author: 'Machado de Assis' },
-  { title: 'O Hobbit', author: 'J.R.R. Tolkien' },
-  { title: 'Hábitos Atômicos', author: 'James Clear' },
-  { title: 'Duna', author: 'Frank Herbert' },
-  { title: 'O Pequeno Príncipe', author: 'Antoine de Saint-Exupéry' },
+  { title: '1984', author: 'George Orwell', isbn: '9788535914849' },
+  { title: 'Dom Casmurro', author: 'Machado de Assis', isbn: '9788508022351' },
+  { title: 'O Hobbit', author: 'J.R.R. Tolkien', isbn: '9788595084742' },
+  { title: 'Hábitos Atômicos', author: 'James Clear', isbn: '9788550804612' },
+  { title: 'Duna', author: 'Frank Herbert', isbn: '9788576573101' },
+  { title: 'O Pequeno Príncipe', author: 'Antoine de Saint-Exupéry', isbn: '9788522031981' },
 ]
+
+function getCoverUrl(isbn: string): string {
+  return `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`
+}
 
 export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => void }) {
   const [query, setQuery] = useState('')
-  const debouncedQuery = useDebounce(query, 400)
+  const debouncedQuery = useDebounce(query, 500) // Increased to 500ms
   const [searchResults, setSearchResults] = useState<Book[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [seedBooks, setSeedBooks] = useState<SeedBook[]>([])
@@ -39,6 +43,7 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
   const dropdownRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const suggestionsRef = useRef<HTMLDivElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   // Load saved seed books on mount
   useEffect(() => {
@@ -48,35 +53,46 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
     }
   }, [])
 
-  // Search effect
+  // Search effect - single request with AbortController
   useEffect(() => {
     const trimmedQuery = debouncedQuery?.trim() ?? ''
 
-    // Always reset searching state when query changes
-    if (!trimmedQuery) {
+    // Require minimum 3 characters for search
+    if (!trimmedQuery || trimmedQuery.length < 3) {
       setSearchResults([])
       setShowDropdown(false)
       setIsSearching(false)
+      setShowSuggestions(trimmedQuery.length === 0)
       return
     }
 
-    const controller = new AbortController()
-    setIsSearching(true)
+    // Abort previous request if still pending
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
 
-    searchBooks(trimmedQuery, 'pt', 8, 0, true)
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    setIsSearching(true)
+    setShowSuggestions(false)
+
+    // Single request - no language restriction for autocomplete (broader results)
+    searchBooks(trimmedQuery, 'pt', 8, 0, true, controller.signal)
       .then(({ books }) => {
         if (!controller.signal.aborted) {
           setSearchResults(books)
           setShowDropdown(books.length > 0)
-          setShowSuggestions(false)
         }
       })
       .catch((error) => {
-        console.error('[Onboarding] Search failed:', error)
         if (!controller.signal.aborted) {
+          console.error('[Onboarding] Search failed:', error)
           setSearchResults([])
           setShowDropdown(false)
-          setShowSuggestions(false)
+        }
+        // Ignore AbortError
+        if (error instanceof Error && error.name === 'AbortError') {
+          return
         }
       })
       .finally(() => {
@@ -85,7 +101,9 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
         }
       })
 
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+    }
   }, [debouncedQuery])
 
   // Click outside to close dropdown/suggestions
@@ -101,6 +119,15 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
 
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
   }, [])
 
   const addToSeeds = useCallback((book: Book) => {
@@ -130,12 +157,15 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
     saveSeedBooks(updated)
   }, [seedBooks])
 
-  const handleSuggestionClick = useCallback(async (suggestion: { title: string; author: string }) => {
+  const handleSuggestionClick = useCallback(async (suggestion: { title: string; author: string; isbn: string }) => {
     setIsSearching(true)
-    setQuery(`${suggestion.title} ${suggestion.author}`)
+    const searchQuery = `${suggestion.title} ${suggestion.author}`
+    setQuery(searchQuery)
 
     try {
-      const { books } = await searchBooks(`${suggestion.title} ${suggestion.author}`, 'pt', 5, 0, true)
+      // Use AbortController for suggestion search too
+      const controller = new AbortController()
+      const { books } = await searchBooks(searchQuery, 'pt', 5, 0, true, controller.signal)
       if (books.length > 0) {
         // Find the best match
         const exactMatch = books.find(b =>
@@ -146,6 +176,13 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
       }
     } catch (error) {
       console.error('[Onboarding] Suggestion search failed:', error)
+      // Try to add fallback with cover
+      const fallbackBook = FALLBACK_BOOKS.find((b: Book) =>
+        b.title.toLowerCase().includes(suggestion.title.toLowerCase())
+      )
+      if (fallbackBook) {
+        addToSeeds(fallbackBook)
+      }
     } finally {
       setIsSearching(false)
     }
@@ -212,14 +249,14 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
               <Input
                 ref={inputRef}
                 type="search"
-                placeholder="Busque por título, autor ou gênero..."
+                placeholder="Busque por título, autor ou gênero (mín. 3 letras)..."
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 onFocus={() => {
                   const trimmed = debouncedQuery?.trim() ?? ''
-                  if (trimmed) {
+                  if (trimmed.length >= 3) {
                     setShowDropdown(true)
-                  } else {
+                  } else if (trimmed.length === 0) {
                     setShowSuggestions(true)
                   }
                 }}
@@ -239,7 +276,7 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
               )}
             </div>
 
-            {/* Quick Picks Suggestions */}
+            {/* Quick Picks Suggestions - with real covers */}
             <AnimatePresence>
               {showSuggestions && query.trim() === '' && seedBooks.length < 3 && (
                 <motion.div
@@ -265,8 +302,13 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
                         className="w-full px-3 py-2.5 flex items-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-xl transition-colors text-left group"
                         role="option"
                       >
-                        <div className="w-8 h-10 flex-shrink-0 relative rounded-lg bg-gradient-to-br from-orange-400 to-orange-600 opacity-80 group-hover:opacity-100 transition-opacity">
-                          <BookOpen className="w-5 h-5 text-white/90 absolute inset-0 m-auto" aria-hidden="true" />
+                        <div className="w-8 h-10 flex-shrink-0 relative rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800">
+                          <img
+                            src={getCoverUrl(suggestion.isbn)}
+                            alt=""
+                            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                            loading="lazy"
+                          />
                         </div>
                         <div className="flex-1 min-w-0 text-left">
                           <p className="font-medium text-slate-800 dark:text-slate-100 truncate">{suggestion.title}</p>
@@ -308,6 +350,7 @@ export function Onboarding({ onComplete }: { onComplete: (books: SeedBook[]) => 
                             src={book.thumbnail}
                             alt=""
                             className="w-full h-full object-cover rounded-lg"
+                            loading="lazy"
                           />
                         ) : (
                           <div className="w-full h-full rounded-lg bg-gradient-to-br from-slate-200 dark:from-slate-700 to-slate-300 dark:to-slate-800 flex items-center justify-center">

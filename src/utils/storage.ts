@@ -54,6 +54,16 @@ export function saveSeedBooks(seedBooks: SeedBook[]): void {
   }
 }
 
+export function clearSeedBooks(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.SEED_BOOKS)
+    localStorage.removeItem(STORAGE_KEYS.SWIPED_IDS)
+    localStorage.removeItem(STORAGE_KEYS.HAS_COMPLETED_ONBOARDING)
+  } catch (error) {
+    console.error('Erro ao limpar seed books:', error)
+  }
+}
+
 export function getSwipedIds(): string[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SWIPED_IDS)

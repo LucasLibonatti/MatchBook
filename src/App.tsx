@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Heart, Sun, Moon } from 'lucide-react'
-import { hasCompletedOnboarding, getSeedBooks, clearAllData, getMatches } from './utils/storage'
+import { Heart, Sun, Moon, RotateCcw } from 'lucide-react'
+import { hasCompletedOnboarding, getSeedBooks, clearAllData, getMatches, clearSeedBooks } from './utils/storage'
 import { Onboarding } from './components/Onboarding'
 import { SwipeArena } from './components/SwipeArena'
 import { MatchesLibrary } from './components/MatchesLibrary'
@@ -65,6 +65,13 @@ function App() {
     setSeedBooks([])
     setScreen('onboarding')
     updateMatchesCount()
+  }
+
+  const handleSwapBooks = () => {
+    // Clear only seed books, preserve matches, go back to onboarding
+    clearSeedBooks()
+    setSeedBooks([])
+    setScreen('onboarding')
   }
 
   const openLibrary = () => {
@@ -161,6 +168,22 @@ function App() {
                 )}
               </Button>
             </motion.div>
+
+            {/* Swap Books Button - only visible in arena mode */}
+            {screen === 'arena' && (
+              <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="gap-2 px-4 hidden sm:flex"
+                  onClick={handleSwapBooks}
+                  aria-label="Trocar os 3 livros favoritos e gerar novas recomendações"
+                >
+                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                  <span className="font-medium text-slate-700 dark:text-slate-300">Trocar 3 Livros</span>
+                </Button>
+              </motion.div>
+            )}
           </div>
         </div>
       </motion.header>

@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { BookOpen, Star, Calendar, ExternalLink } from 'lucide-react'
 import type { Book } from '../types/book'
 import { Badge } from './ui'
+import { sanitizeHtml } from '../utils/helpers'
 
 interface BookCardProps {
   book: Book
@@ -18,6 +20,7 @@ export function BookCard({
 }: BookCardProps) {
   const authors = book.authors.join(', ')
   const year = book.year
+  const [imageError, setImageError] = useState(false)
 
   return (
     <motion.div
@@ -25,18 +28,27 @@ export function BookCard({
       transition={{ duration: 0.2 }}
       className={`group rounded-3xl overflow-hidden bg-white dark:bg-slate-900 cursor-pointer ${compact ? 'max-w-xs' : ''}`}
       onClick={onClick}
+      style={{ willChange: 'transform, box-shadow' }}
     >
       <div className="relative aspect-[2/3] overflow-hidden">
-        {book.thumbnail ? (
+        {!imageError && book.thumbnail ? (
           <img
             src={book.thumbnail}
             alt={`Capa do livro ${book.title}`}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            className="w-full h-full object-cover"
             loading="lazy"
+            onError={() => setImageError(true)}
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
+          <div className="w-full h-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center relative">
             <BookOpen className="w-16 h-16 text-white/30" aria-hidden="true" />
+            {book.title && !imageError && (
+              <div className="absolute inset-0 flex items-center justify-center p-4 text-white/20">
+                <p className="text-center text-sm font-medium leading-tight">
+                  {book.title.length > 20 ? book.title.slice(0, 20) + '...' : book.title}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -45,6 +57,7 @@ export function BookCard({
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             className="absolute top-3 right-3"
+            style={{ willChange: 'transform, opacity' }}
           >
             <Badge variant="default" size="md" className="shadow-lg bg-orange-500 text-white">
               {book.matchPercentage}% Match
@@ -57,6 +70,7 @@ export function BookCard({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="absolute bottom-3 left-3 right-3"
+            style={{ willChange: 'transform, opacity' }}
           >
             <Badge variant="default" size="sm" className="shadow-lg bg-orange-500 text-white w-fit">
               {book.matchPercentage}% Match
@@ -132,7 +146,7 @@ export function BookCard({
             transition={{ delay: 0.3 }}
             className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed line-clamp-3 mb-4"
           >
-            {book.shortDescription}
+            {sanitizeHtml(book.shortDescription)}
           </motion.p>
         )}
 

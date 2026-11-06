@@ -1,12 +1,15 @@
 @import "tailwindcss";
 
+/* Tailwind v4 dark mode variant - required for class-based dark mode */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: light dark;
   color: #1e293b;
-  background-color: #ffffff;
+  background-color: #f8fafc;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -17,19 +20,30 @@
   box-sizing: border-box;
 }
 
+html {
+  /* No fixed background - let components handle it */
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #f8fafc;
-}
-
-.dark body {
-  background-color: #030712;
+  /* Background is controlled by the root div in App.tsx */
+  background-color: transparent;
 }
 
 #root {
   min-height: 100vh;
+  /* Default light theme background - will be overridden by dark class */
+  background-color: #f8fafc;
+  color: #1e293b;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Dark mode root styles */
+.dark #root {
+  background-color: #030712;
+  color: #f1f5f9;
 }
 
 /* Custom scrollbar */
@@ -134,9 +148,33 @@ body {
   object-fit: cover;
 }
 
-/* Smooth transitions for all interactive elements */
-button, a, input, select, textarea {
+/* Remove transition-all from interactive elements that use Framer Motion */
+/* Framer Motion handles animations - CSS transitions conflict with it */
+.motion-element,
+[data-framer-motion] {
+  transition: none !important;
+}
+
+/* Only apply CSS transitions to non-animated elements */
+button:not([style*="transform"]),
+a:not([style*="transform"]),
+input:not([style*="transform"]),
+select:not([style*="transform"]),
+textarea:not([style*="transform"]) {
   transition: all 0.2s ease;
+}
+
+/* Will-change utilities for performance */
+.will-change-transform {
+  will-change: transform;
+}
+
+.will-change-opacity {
+  will-change: opacity;
+}
+
+.will-change-transform-opacity {
+  will-change: transform, opacity;
 }
 
 /* Reduce motion for accessibility */
@@ -164,4 +202,13 @@ button, a, input, select, textarea {
 
 .dark .shadow-soft-orange {
   box-shadow: 0 10px 40px -10px rgb(249 115 22 / 0.15);
+}
+
+/* Image fallback styling */
+.image-fallback {
+  @apply bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center;
+}
+
+.dark .image-fallback {
+  @apply from-orange-500 to-orange-600;
 }

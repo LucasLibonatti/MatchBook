@@ -1,10 +1,12 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  darkMode: 'class',
+  // Tailwind v4 uses CSS-first config via @import "tailwindcss" in index.css
+  // This file is kept for backwards compatibility with plugins if needed
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  // darkMode is handled in CSS via @custom-variant dark (&:where(.dark, .dark *));
   theme: {
     extend: {
       colors: {
