@@ -4,6 +4,9 @@ const GOOGLE_BOOKS_API = 'https://www.googleapis.com/books/v1/volumes'
 const DEFAULT_LANGUAGE = 'pt'
 const MAX_RESULTS = 40
 
+// Get API key from Vite env (VITE_ prefix required for client-side exposure)
+const GOOGLE_BOOKS_API_KEY = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY || ''
+
 // Fallback books for when API fails
 const FALLBACK_BOOKS: Book[] = [
   {
@@ -180,14 +183,36 @@ export async function searchBooks(
     projection: 'full',
   })
 
+  // Add API key if available (Vite env: VITE_GOOGLE_BOOKS_API_KEY)
+  if (GOOGLE_BOOKS_API_KEY) {
+    params.set('key', GOOGLE_BOOKS_API_KEY)
+  }
+
   try {
-    const response = await fetch(`${GOOGLE_BOOKS_API}?${params}`)
-    if (!response.ok) throw new Error(`Erro na busca: ${response.status}`)
+    const url = `${GOOGLE_BOOKS_API}?${params}`
+    console.log('[GoogleBooks] Request:', { query, language, maxResults, forAutocomplete, hasKey: !!GOOGLE_BOOKS_API_KEY })
+
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unable to read error response')
+      console.error('[GoogleBooks] API Error:', {
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url,
+        errorBody: errorText,
+        query,
+      })
+      throw new Error(`Google Books API error: ${response.status} ${response.statusText} - ${errorText}`)
+    }
 
     const data: GoogleBooksResponse = await response.json()
     const items = data.items || []
 
+    console.log('[GoogleBooks] Response:', { totalItems: data.totalItems, itemsCount: items.length, query })
+
     if (items.length === 0) {
+      console.warn('[GoogleBooks] No items returned for query:', query)
       return { books: [], totalItems: 0 }
     }
 
@@ -195,8 +220,16 @@ export async function searchBooks(
     const qualityItems = forAutocomplete ? filterAutocompleteBooks(items) : filterQualityBooks(items)
     const books = qualityItems.map(mapGoogleBookToBook)
 
+    console.log('[GoogleBooks] Filtered:', {
+      originalCount: items.length,
+      filteredCount: books.length,
+      forAutocomplete,
+      query
+    })
+
     // If no results after filtering, return fallback for autocomplete
     if (books.length === 0 && forAutocomplete) {
+      console.log('[GoogleBooks] Returning fallback books for autocomplete')
       return { books: FALLBACK_BOOKS.slice(0, maxResults), totalItems: FALLBACK_BOOKS.length }
     }
 
@@ -205,9 +238,14 @@ export async function searchBooks(
       totalItems: data.totalItems || 0,
     }
   } catch (error) {
-    console.error('Erro ao buscar livros:', error)
+    console.error('[GoogleBooks] Search failed:', {
+      error: error instanceof Error ? error.message : String(error),
+      query,
+      forAutocomplete,
+    })
     // Return fallback books for autocomplete so UI never breaks
     if (forAutocomplete) {
+      console.log('[GoogleBooks] Returning fallback books due to error')
       return { books: FALLBACK_BOOKS.slice(0, maxResults), totalItems: FALLBACK_BOOKS.length }
     }
     return { books: [], totalItems: 0 }
@@ -216,13 +254,29 @@ export async function searchBooks(
 
 export async function getBookById(id: string): Promise<Book | null> {
   try {
-    const response = await fetch(`${GOOGLE_BOOKS_API}/${id}`)
-    if (!response.ok) return null
+    const params = new URLSearchParams()
+    if (GOOGLE_BOOKS_API_KEY) {
+      params.set('key', GOOGLE_BOOKS_API_KEY)
+    }
+    const url = `${GOOGLE_BOOKS_API}/${id}?${params}`
+
+    const response = await fetch(url)
+    if (!response.ok) {
+      console.error('[GoogleBooks] getBookById error:', {
+        status: response.status,
+        statusText: response.statusText,
+        id,
+      })
+      return null
+    }
 
     const data = await response.json()
     return mapGoogleBookToBook(data)
   } catch (error) {
-    console.error('Erro ao buscar livro por ID:', error)
+    console.error('[GoogleBooks] getBookById failed:', {
+      error: error instanceof Error ? error.message : String(error),
+      id,
+    })
     return null
   }
 }
