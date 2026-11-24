@@ -1,29 +1,40 @@
 {
   "name": "matchbook",
-  "version": "1.0.0",
-  "description": "MatchBook - Sistema inteligente de recomendação literária",
+  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch server/dev.ts\" \"vite\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/dev.ts",
+    "build": "tsc -b && tsc -p tsconfig.server.json --noEmit && vite build",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "framer-motion": "^14.7.1",
-    "lucide-react": "^1.63.0",
+    "@hono/node-server": "^2.1.11",
+    "clsx": "^2.1.1",
+    "framer-motion": "^14.14.0",
+    "hono": "^4.13.21",
+    "lucide-react": "^1.74.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "autoprefixer": "^10.6.2",
-    "postcss": "^8.5.32",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "concurrently": "^10.0.7",
+    "dotenv": "^18.0.10",
+    "oxlint": "^1.90.0",
+    "tailwindcss": "^4.3.5",
+    "tsx": "^4.23.15",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.1"
   }
 }

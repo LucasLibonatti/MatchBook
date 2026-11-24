@@ -1,19 +1,31 @@
 @import "tailwindcss";
 
-/* Tailwind v4 dark mode variant - required for class-based dark mode */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color-scheme: light dark;
-  color: #1e293b;
-  background-color: #f8fafc;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --bg-canvas: #F7F4EF;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F0ECE3;
+  --border-subtle: #E5DFD3;
+  --text-primary: #161514;
+  --text-secondary: #5C5852;
+  --text-muted: #8C867B;
+  --accent-primary: #EA580C;
+  --accent-hover: #C2410C;
+  --accent-soft: rgba(234, 88, 12, 0.10);
+}
+
+html.dark {
+  --bg-canvas: #0A0A0C;
+  --bg-surface: #131317;
+  --bg-elevated: #1C1C22;
+  --border-subtle: #272730;
+  --text-primary: #F5F3EF;
+  --text-secondary: #A19E97;
+  --text-muted: #6E6B65;
+  --accent-primary: #F97316;
+  --accent-hover: #FB923C;
+  --accent-soft: rgba(249, 115, 22, 0.14);
 }
 
 * {
@@ -21,194 +33,176 @@
 }
 
 html {
-  /* No fixed background - let components handle it */
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   margin: 0;
-  min-width: 320px;
   min-height: 100vh;
-  /* Background is controlled by the root div in App.tsx */
-  background-color: transparent;
 }
 
-#root {
-  min-height: 100vh;
-  /* Default light theme background - will be overridden by dark class */
-  background-color: #f8fafc;
-  color: #1e293b;
-  transition: background-color 0.2s ease, color 0.2s ease;
+.font-display {
+  font-family: 'Instrument Serif', Georgia, serif;
 }
 
-/* Dark mode root styles */
-.dark #root {
-  background-color: #030712;
-  color: #f1f5f9;
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
+.book-cover-frame {
+  aspect-ratio: 2 / 3;
+  border-radius: 4px 12px 12px 4px;
+  box-shadow:
+    inset 6px 0 12px rgba(0, 0, 0, 0.28),
+    inset 1px 0 2px rgba(255, 255, 255, 0.25),
+    0 16px 32px -8px rgba(0, 0, 0, 0.28);
+  background-color: var(--bg-elevated);
+  overflow: hidden;
+  position: relative;
+}
+
+.book-cover-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.editorial-badge {
+  @apply font-mono text-xs px-2 py-0.5 rounded;
+  background-color: var(--accent-soft);
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+}
+
+.editorial-pill {
+  @apply text-xs px-2.5 py-1 rounded-full;
+  background-color: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-primary {
+  @apply px-6 py-3 rounded-xl font-semibold font-mono text-sm transition-all duration-200;
+  background-color: var(--accent-primary);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px -4px rgba(234, 88, 12, 0.4);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--border-subtle);
+}
+
+.btn-ghost {
+  @apply p-2 rounded-lg transition-colors duration-200;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:hover {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.input-editorial {
+  @apply w-full py-3 rounded-xl text-base transition-all duration-200;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+.input-editorial.with-icon {
+  padding-left: 4rem;
+}
+
+.input-editorial:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.input-editorial::placeholder {
+  color: var(--text-muted);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f5f9;
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.dark ::-webkit-scrollbar-track {
-  background: #0f172a;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: var(--border-subtle);
   border-radius: 3px;
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: #475569;
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
-}
-
-/* Focus styles */
-:focus-visible {
-  outline: 2px solid #f97316;
-  outline-offset: 2px;
-}
-
-/* Selection styles */
-::selection {
-  background-color: #f97316;
-  color: white;
-}
-
-/* Drag preview styles */
-.drag-preview {
-  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
-}
-
-/* Animation utilities */
-.animate-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-@keyframes fadeIn {
+@keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(20px); }
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes scaleIn {
+@keyframes scale-in {
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
 
-/* Shimmer animation for disabled button */
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
+.animate-slide-up { animation: slide-up 0.3s ease-out; }
+.animate-scale-in { animation: scale-in 0.2s ease-out; }
+
+.toast-enter {
+  animation: slide-up 0.3s ease-out, fade-in 0.2s ease-out;
 }
 
-.shimmer {
-  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+.toast-exit {
+  animation: fade-in 0.2s ease-in reverse;
 }
 
-.dark .shimmer {
-  background: linear-gradient(90deg, #334155 25%, #475569 50%, #334155 75%);
-  background-size: 200% 100%;
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
 }
 
-/* Glassmorphism utility */
-.glass {
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.dark .glass {
-  background: rgba(15, 23, 42, 0.8);
-}
-
-/* Book cover aspect ratio */
-.book-cover {
-  aspect-ratio: 2/3;
-  object-fit: cover;
-}
-
-/* Remove transition-all from interactive elements that use Framer Motion */
-/* Framer Motion handles animations - CSS transitions conflict with it */
-.motion-element,
-[data-framer-motion] {
-  transition: none !important;
-}
-
-/* Only apply CSS transitions to non-animated elements */
-button:not([style*="transform"]),
-a:not([style*="transform"]),
-input:not([style*="transform"]),
-select:not([style*="transform"]),
-textarea:not([style*="transform"]) {
-  transition: all 0.2s ease;
-}
-
-/* Will-change utilities for performance */
-.will-change-transform {
-  will-change: transform;
-}
-
-.will-change-opacity {
-  will-change: opacity;
-}
-
-.will-change-transform-opacity {
-  will-change: transform, opacity;
-}
-
-/* Reduce motion for accessibility */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* Custom utility for text gradient */
-.text-gradient-orange {
-  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* Soft orange shadow */
-.shadow-soft-orange {
-  box-shadow: 0 10px 40px -10px rgb(249 115 22 / 0.2);
-}
-
-.dark .shadow-soft-orange {
-  box-shadow: 0 10px 40px -10px rgb(249 115 22 / 0.15);
-}
-
-/* Image fallback styling */
-.image-fallback {
-  @apply bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center;
-}
-
-.dark .image-fallback {
-  @apply from-orange-500 to-orange-600;
+.selection::selection {
+  background-color: var(--accent-soft);
+  color: var(--accent-primary);
 }

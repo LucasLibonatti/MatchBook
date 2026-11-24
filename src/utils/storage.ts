@@ -1,112 +1,193 @@
-import type { Book, SeedBook } from '../types/book'
+import type { SeedBook, BookRecommendation, MatchBook, SwipeAction } from '../types/book';
 
 const STORAGE_KEYS = {
-  MATCHES: 'matchbook_matches',
-  SEED_BOOKS: 'matchbook_seed_books',
-  SWIPED_IDS: 'matchbook_swiped_ids',
-  HAS_COMPLETED_ONBOARDING: 'matchbook_has_completed_onboarding',
-} as const
+  THEME: 'matchbook_theme',
+  SEEDS: 'matchbook_seeds_v2',
+  MATCHES: 'matchbook_matches_v2',
+  SWIPES: 'matchbook_swipes_v2',
+  COVERS_CACHE: 'matchbook_covers_cache_v3',
+  EXCLUDED_TITLES: 'matchbook_excluded_titles_v2',
+} as const;
 
-export function getMatches(): Book[] {
+export function getTheme(): 'light' | 'dark' {
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.MATCHES)
-    return data ? JSON.parse(data) : []
+    const stored = localStorage.getItem(STORAGE_KEYS.THEME);
+    if (stored === 'dark' || stored === 'light') return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   } catch {
-    return []
+    return 'light';
   }
 }
 
-export function saveMatches(matches: Book[]): void {
+export function setTheme(theme: 'light' | 'dark'): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.MATCHES, JSON.stringify(matches))
-  } catch (error) {
-    console.error('Erro ao salvar matches:', error)
+    localStorage.setItem(STORAGE_KEYS.THEME, theme);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  } catch {
+    // Ignore storage errors
   }
 }
 
-export function addMatch(book: Book): void {
-  const matches = getMatches()
-  if (!matches.some(m => m.id === book.id)) {
-    matches.unshift(book)
-    saveMatches(matches)
+export function getSeeds(): SeedBook[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEYS.SEEDS);
+    if (stored) return JSON.parse(stored);
+  } catch {
+    // Ignore
+  }
+  return [];
+}
+
+export function setSeeds(seeds: SeedBook[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SEEDS, JSON.stringify(seeds));
+  } catch {
+    // Ignore
+  }
+}
+
+export function getMatches(): MatchBook[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEYS.MATCHES);
+    if (stored) return JSON.parse(stored);
+  } catch {
+    // Ignore
+  }
+  return [];
+}
+
+export function setMatches(matches: MatchBook[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.MATCHES, JSON.stringify(matches));
+  } catch {
+    // Ignore
+  }
+}
+
+export function addMatch(book: BookRecommendation): void {
+  const matches = getMatches();
+  const exists = matches.some(m => m.id === book.id);
+  if (!exists) {
+    const matchBook: MatchBook = {
+      ...book,
+      matchedAt: Date.now(),
+    };
+    setMatches([matchBook, ...matches]);
   }
 }
 
 export function removeMatch(bookId: string): void {
-  const matches = getMatches().filter(m => m.id !== bookId)
-  saveMatches(matches)
+  const matches = getMatches().filter(m => m.id !== bookId);
+  setMatches(matches);
 }
 
-export function getSeedBooks(): SeedBook[] {
+export function getSwipes(): SwipeAction[] {
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.SEED_BOOKS)
-    return data ? JSON.parse(data) : []
+    const stored = localStorage.getItem(STORAGE_KEYS.SWIPES);
+    if (stored) return JSON.parse(stored);
   } catch {
-    return []
+    // Ignore
   }
+  return [];
 }
 
-export function saveSeedBooks(seedBooks: SeedBook[]): void {
+export function setSwipes(swipes: SwipeAction[]): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.SEED_BOOKS, JSON.stringify(seedBooks))
-  } catch (error) {
-    console.error('Erro ao salvar seed books:', error)
-  }
-}
-
-export function clearSeedBooks(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEYS.SEED_BOOKS)
-    localStorage.removeItem(STORAGE_KEYS.SWIPED_IDS)
-    localStorage.removeItem(STORAGE_KEYS.HAS_COMPLETED_ONBOARDING)
-  } catch (error) {
-    console.error('Erro ao limpar seed books:', error)
-  }
-}
-
-export function getSwipedIds(): string[] {
-  try {
-    const data = localStorage.getItem(STORAGE_KEYS.SWIPED_IDS)
-    return data ? JSON.parse(data) : []
+    localStorage.setItem(STORAGE_KEYS.SWIPES, JSON.stringify(swipes));
   } catch {
-    return []
+    // Ignore
   }
 }
 
-export function saveSwipedIds(ids: string[]): void {
+export function addSwipe(action: SwipeAction): void {
+  const swipes = getSwipes();
+  setSwipes([action, ...swipes].slice(0, 100));
+}
+
+export function getExcludedTitles(): string[] {
   try {
-    localStorage.setItem(STORAGE_KEYS.SWIPED_IDS, JSON.stringify(ids))
-  } catch (error) {
-    console.error('Erro ao salvar swiped IDs:', error)
-  }
-}
-
-export function addSwipedId(id: string): void {
-  const ids = getSwipedIds()
-  if (!ids.includes(id)) {
-    ids.push(id)
-    saveSwipedIds(ids)
-  }
-}
-
-export function hasCompletedOnboarding(): boolean {
-  try {
-    return localStorage.getItem(STORAGE_KEYS.HAS_COMPLETED_ONBOARDING) === 'true'
+    const stored = localStorage.getItem(STORAGE_KEYS.EXCLUDED_TITLES);
+    if (stored) return JSON.parse(stored);
   } catch {
-    return false
+    // Ignore
+  }
+  return [];
+}
+
+export function setExcludedTitles(titles: string[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.EXCLUDED_TITLES, JSON.stringify(titles));
+  } catch {
+    // Ignore
   }
 }
 
-export function setCompletedOnboarding(value: boolean): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.HAS_COMPLETED_ONBOARDING, String(value))
-  } catch (error) {
-    console.error('Erro ao salvar status de onboarding:', error)
+export function addExcludedTitle(title: string): void {
+  const titles = getExcludedTitles();
+  const normalized = title.toLowerCase().trim();
+  if (!titles.some(t => t.toLowerCase().trim() === normalized)) {
+    setExcludedTitles([title, ...titles].slice(0, 200));
   }
+}
+
+export function clearExcludedTitles(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.EXCLUDED_TITLES);
+  } catch {
+    // Ignore
+  }
+}
+
+export interface CoverCacheEntry {
+  url: string;
+  timestamp: number;
+}
+
+export function getCoverCache(): Record<string, CoverCacheEntry> {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEYS.COVERS_CACHE);
+    if (stored) return JSON.parse(stored);
+  } catch {
+    // Ignore
+  }
+  return {};
+}
+
+export function setCoverCache(cache: Record<string, CoverCacheEntry>): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.COVERS_CACHE, JSON.stringify(cache));
+  } catch {
+    // Ignore
+  }
+}
+
+export function getCachedCover(key: string): string | null {
+  const cache = getCoverCache();
+  const entry = cache[key];
+  if (entry && Date.now() - entry.timestamp < 30 * 24 * 60 * 60 * 1000) {
+    return entry.url;
+  }
+  return null;
+}
+
+export function setCachedCover(key: string, url: string): void {
+  const cache = getCoverCache();
+  cache[key] = { url, timestamp: Date.now() };
+  setCoverCache(cache);
+}
+
+function slugify(title: string, author: string): string {
+  return `${title}-${author}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+export function getCoverCacheKey(title: string, author: string): string {
+  return slugify(title, author);
 }
 
 export function clearAllData(): void {
-  Object.values(STORAGE_KEYS).forEach(key => {
-    localStorage.removeItem(key)
-  })
+  try {
+    Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+  } catch {
+    // Ignore
+  }
 }

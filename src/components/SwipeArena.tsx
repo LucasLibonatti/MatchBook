@@ -1,470 +1,500 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { motion, AnimatePresence, useMotionValue, useTransform, type PanInfo } from 'framer-motion'
-import { RotateCcw, Heart, X, BookOpen, ExternalLink, Loader2, RotateCcw as UndoIcon, ArrowLeft } from 'lucide-react'
-import { buildInitialDeck, loadMoreCards } from '../utils/recommendationEngine'
-import { addMatch, addSwipedId, getSwipedIds, getMatches, clearSeedBooks } from '../utils/storage'
-import type { Book, SeedBook } from '../types/book'
-import { Button, Badge } from './ui'
-import { BookCard } from './BookCard'
-
-const SWIPE_THRESHOLD = 100
-const CARD_SCALE_STEP = 0.94
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
+import { RotateCcw, Sparkles, BookOpen, Heart, X, Undo2, RefreshCw } from 'lucide-react';
+import type { BookRecommendation, SeedBook } from '../types/book';
+import { BookCard } from './BookCard';
+import { ToastContainer } from './Toast';
+import { hydrateRecommendationCovers } from '../services/bookCoverService';
+import { getRecommendations } from '../services/groqService';
+import { useMatchBook } from '../hooks/useMatchBook';
+import type { UndoableSwipe } from '../context/matchBookStore';
 
 interface SwipeArenaProps {
-  seedBooks: SeedBook[]
-  onRestart: () => void
+  seedBooks: SeedBook[];
+  onBackToOnboarding: () => void;
+  isModalOpen?: boolean;
 }
 
-export function SwipeArena({ seedBooks, onRestart }: SwipeArenaProps) {
-  const [deck, setDeck] = useState<Book[]>([])
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
-  const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [showMatchModal, setShowMatchModal] = useState<Book | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [lastSwiped, setLastSwiped] = useState<{ book: Book; direction: 'left' | 'right' } | null>(null)
-  const [canUndo, setCanUndo] = useState(false)
-  const swipedIdsRef = useRef<string[]>([])
-  const dragStartRef = useRef(0)
+export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false }: SwipeArenaProps) {
+  const { likeBook, passBook, undoSwipe, excludedTitles } = useMatchBook();
 
-  // Framer Motion values for smooth 60fps animations
-  const dragX = useMotionValue(0)
-  const rotation = useTransform(dragX, [-300, 0, 300], [-15, 0, 15])
-  const opacity = useTransform(dragX, [-500, -100, 0, 100, 500], [0, 0.5, 1, 0.5, 0])
-  const likeIndicatorOpacity = useTransform(dragX, [0, 150], [0, 1])
-  const nopeIndicatorOpacity = useTransform(dragX, [-150, 0], [1, 0])
+  const [books, setBooks] = useState<BookRecommendation[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingStage, setLoadingStage] = useState('Lendo a essência dos seus 3 livros...');
+  const [error, setError] = useState<string | null>(null);
+  const [batchSource, setBatchSource] = useState<'groq' | 'fallback'>('groq');
+  const [lastAction, setLastAction] = useState<UndoableSwipe | null>(null);
+  const [isSynopsisExpanded, setIsSynopsisExpanded] = useState(false);
+  const [toasts, setToasts] = useState<Array<{ id: string; book: BookRecommendation }>>([]);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
-  const currentBook = deck[currentIndex]
-  const nextBook = deck[currentIndex + 1]
-  const remainingCards = deck.length - currentIndex - 1
-
-  // Load initial deck
+  const excludedTitlesRef = useRef(excludedTitles);
   useEffect(() => {
-    const initializeDeck = async () => {
-      setIsLoading(true)
-      const savedSwiped = getSwipedIds()
-      swipedIdsRef.current = savedSwiped
+    excludedTitlesRef.current = excludedTitles;
+  }, [excludedTitles]);
+
+  const x = useMotionValue<number>(0);
+  const y = useMotionValue<number>(0);
+  const cardOpacity = useMotionValue<number>(1);
+  const cardRotate = useMotionValue<number>(0);
+
+  const likeOpacity = useTransform<number, number>(x, [20, 120], [0, 1]);
+  const passOpacity = useTransform<number, number>(x, [-20, -120], [0, 1]);
+  const likeScale = useTransform<number, number>(x, [20, 120], [0.8, 1]);
+  const passScale = useTransform<number, number>(x, [-20, -120], [0.8, 1]);
+
+  const nextCardScale = useTransform<number, number>(x, [-150, 0, 150], [1, 0.94, 1]);
+  const nextCardY = useTransform<number, number>(x, [-150, 0, 150], [0, 14, 0]);
+  const nextCardOpacity = useTransform<number, number>(x, [-150, 0, 150], [1, 0.65, 1]);
+
+  const thirdCardScale = useTransform<number, number>(x, [-150, 0, 150], [0.9, 0.88, 0.9]);
+  const thirdCardY = useTransform<number, number>(x, [-150, 0, 150], [24, 28, 24]);
+  const thirdCardOpacity = useTransform<number, number>(x, [-150, 0, 150], [0.5, 0.35, 0.5]);
+
+  const thirdCardScaleStable = useTransform<number, number>(x, () => 0.82);
+  const thirdCardYStable = useTransform<number, number>(x, () => 40);
+  const thirdCardOpacityStable = useTransform<number, number>(x, () => 0.2);
+
+  const visibleBooks = books.slice(currentIndex, currentIndex + 3);
+  const activeBook = books[currentIndex] ?? null;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    async function fetchBatch() {
+      setIsLoading(true);
+      setError(null);
+      setIsSynopsisExpanded(false);
+      setLastAction(null);
+      x.set(0);
+      y.set(0);
+      cardRotate.set(0);
+      cardOpacity.set(1);
 
       try {
-        const initialDeck = await buildInitialDeck(seedBooks)
-        const filteredDeck = initialDeck.filter(book => !savedSwiped.includes(book.id))
-        setDeck(filteredDeck)
-        setCurrentIndex(0)
-        setLastSwiped(null)
-        setCanUndo(false)
-      } catch (error) {
-        console.error('Erro ao carregar deck:', error)
+        setLoadingStage('Consultando curadoria de IA...');
+        const seedTitles = seedBooks.map((b) => b.title);
+        const allExcluded = [...excludedTitlesRef.current, ...seedTitles];
+
+        const batch = await getRecommendations(seedBooks, allExcluded);
+        if (cancelled) return;
+
+        setBatchSource(batch.source);
+        setLoadingStage('Preparando capas em alta definição...');
+
+        const initialHydrated = await hydrateRecommendationCovers(
+          batch.recommendations,
+          (index, updatedBook) => {
+            if (cancelled) return;
+            setBooks((prev) => {
+              if (index < 0 || index >= prev.length) return prev;
+              const next = [...prev];
+              next[index] = updatedBook;
+              return next;
+            });
+          },
+          controller.signal
+        );
+
+        if (cancelled) return;
+        setBooks(initialHydrated);
+        setCurrentIndex(0);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Erro ao carregar recomendações');
+        }
       } finally {
-        setIsLoading(false)
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     }
 
-    initializeDeck()
-  }, [seedBooks])
+    void fetchBatch();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [seedBooks, reloadNonce, x, y, cardRotate, cardOpacity]);
 
-  // Load more cards when running low
-  useEffect(() => {
-    if (remainingCards <= 2 && !isLoadingMore && deck.length > 0) {
-      loadMoreCardsHandler()
-    }
-  }, [remainingCards, deck.length, isLoadingMore])
+  const performSwipe = useCallback(
+    (
+      direction: 'left' | 'right',
+      book: BookRecommendation,
+      options?: { velocityX?: number; fromDrag?: boolean }
+    ) => {
+      if (isAnimating) return;
 
-  const loadMoreCardsHandler = useCallback(async () => {
-    setIsLoadingMore(true)
-    try {
-      const moreCards = await loadMoreCards(seedBooks, deck, swipedIdsRef.current)
-      const filtered = moreCards.filter(book =>
-        !swipedIdsRef.current.includes(book.id) &&
-        !deck.some(d => d.id === book.id)
-      )
-      setDeck(prev => [...prev, ...filtered])
-    } catch (error) {
-      console.error('Erro ao carregar mais cartas:', error)
-    } finally {
-      setIsLoadingMore(false)
-    }
-  }, [seedBooks, deck])
+      const { velocityX = 0, fromDrag = false } = options || {};
+      const action: UndoableSwipe = {
+        type: direction === 'right' ? 'like' : 'pass',
+        book,
+        direction,
+      };
 
-  const handleSwipe = useCallback((direction: 'left' | 'right') => {
-    if (!currentBook) return
+      if (direction === 'right') {
+        likeBook(book);
+        const toastId = `${book.id}-${Date.now()}`;
+        setToasts((prev) => [...prev, { id: toastId, book }]);
+        setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== toastId));
+        }, 3800);
+      } else {
+        passBook(book);
+      }
 
-    const bookId = currentBook.id
-    swipedIdsRef.current = [...swipedIdsRef.current, bookId]
-    addSwipedId(bookId)
+      setIsSynopsisExpanded(false);
+      setIsAnimating(true);
 
-    if (direction === 'right') {
-      addMatch(currentBook)
-      setShowMatchModal(currentBook)
-    }
+      const throwDistance = (typeof window !== 'undefined' ? window.innerWidth : 1400) + 400;
+      const targetX = direction === 'right' ? throwDistance : -throwDistance;
+      const targetY = y.get() + (direction === 'right' ? 30 : -30);
+      const targetRotate = direction === 'right' ? 25 : -25;
 
-    // Store for undo
-    setLastSwiped({ book: currentBook, direction })
-    setCanUndo(true)
+      const animConfig =
+        fromDrag && Math.abs(velocityX) > 800
+          ? { type: 'spring' as const, stiffness: 350, damping: 18, mass: 0.6 }
+          : { type: 'spring' as const, stiffness: 280, damping: 22, mass: 0.8 };
 
-    // Animate out using motion value
-    dragX.set(direction === 'left' ? -500 : 500)
+      animate(x, targetX, animConfig);
+      animate(y, targetY, animConfig);
+      animate(cardRotate, targetRotate, animConfig);
+      animate(cardOpacity, 0, { duration: 0.18, ease: 'easeOut' }).then(() => {
+        setCurrentIndex((prev) => prev + 1);
+        setLastAction(action);
+        x.set(0);
+        y.set(0);
+        cardRotate.set(0);
+        cardOpacity.set(1);
+        setIsAnimating(false);
+      });
+    },
+    [isAnimating, likeBook, passBook, x, y, cardRotate, cardOpacity]
+  );
 
-    setTimeout(() => {
-      setCurrentIndex(prev => prev + 1)
-      dragX.set(0)
-    }, 300)
-  }, [currentBook])
+  const triggerSwipe = useCallback(
+    (direction: 'left' | 'right') => {
+      if (!activeBook || isAnimating) return;
+      performSwipe(direction, activeBook, { fromDrag: false });
+    },
+    [activeBook, isAnimating, performSwipe]
+  );
 
   const handleUndo = useCallback(() => {
-    if (!lastSwiped || !canUndo) return
+    if (!lastAction || isAnimating || currentIndex === 0) return;
 
-    const { book, direction } = lastSwiped
+    undoSwipe(lastAction);
+    setIsSynopsisExpanded(false);
+    setCurrentIndex((prev) => Math.max(0, prev - 1));
 
-    // Remove from swiped IDs
-    swipedIdsRef.current = swipedIdsRef.current.filter(id => id !== book.id)
-    // Note: We'd need a removeSwipedId in storage, but for now just rebuild
-    // For simplicity, we'll just re-add the card to the deck
-    setDeck(prev => [book, ...prev])
-    setCurrentIndex(0) // Reset to show the undone card
+    const returnFromX = lastAction.direction === 'right' ? 420 : -420;
+    const returnFromRotate = lastAction.direction === 'right' ? 16 : -16;
+    x.set(returnFromX);
+    cardRotate.set(returnFromRotate);
+    y.set(24);
+    animate(x, 0, { type: 'spring', stiffness: 420, damping: 28 });
+    animate(cardRotate, 0, { type: 'spring', stiffness: 420, damping: 28 });
+    animate(y, 0, { type: 'spring', stiffness: 420, damping: 28 });
 
-    if (direction === 'right') {
-      // Remove from matches
-      getMatches().filter(m => m.id !== book.id)
-      // We need to update storage - for now just note it
-      console.log('Would remove match:', book.id)
-    }
+    setLastAction(null);
+  }, [lastAction, isAnimating, currentIndex, undoSwipe, x, y, cardRotate]);
 
-    setLastSwiped(null)
-    setCanUndo(false)
-  }, [lastSwiped, canUndo])
+  const handleDragEnd = useCallback(
+    (offsetX: number, _offsetY: number, velocityX: number) => {
+      if (!activeBook) return;
+      const shouldSwipe = Math.abs(offsetX) > 100 || Math.abs(velocityX) > 400;
 
-  const handleDragStart = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    dragStartRef.current = info.offset.x
-    setIsDragging(true)
-    dragX.set(0)
-  }, [])
+      if (shouldSwipe) {
+        const direction = offsetX > 0 ? 'right' : 'left';
+        performSwipe(direction, activeBook, { velocityX, fromDrag: true });
+      } else {
+        animate(x, 0, { type: 'spring', stiffness: 500, damping: 30 });
+        animate(y, 0, { type: 'spring', stiffness: 500, damping: 30 });
+        animate(cardRotate, 0, { type: 'spring', stiffness: 500, damping: 30 });
+      }
+    },
+    [activeBook, performSwipe, x, y, cardRotate]
+  );
 
-  const handleDrag = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    if (!isDragging) return
+  const toggleSynopsis = useCallback(() => {
+    if (!activeBook || isAnimating) return;
+    setIsSynopsisExpanded((prev) => !prev);
+  }, [activeBook, isAnimating]);
 
-    const deltaX = info.offset.x
-    // Limit drag distance
-    const limitedDelta = Math.max(-300, Math.min(300, deltaX))
-    dragX.set(limitedDelta)
-  }, [isDragging])
+  // Global keyboard shortcuts for the swipe arena
+  useEffect(() => {
+    if (isLoading || isModalOpen) return;
 
-  const handleDragEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, _info: PanInfo) => {
-    if (!isDragging || !currentBook) return
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
 
-    const deltaX = dragStartRef.current
+      switch (e.key) {
+        case 'ArrowRight':
+          if (!isSynopsisExpanded) {
+            e.preventDefault();
+            triggerSwipe('right');
+          }
+          break;
+        case 'ArrowLeft':
+          if (!isSynopsisExpanded) {
+            e.preventDefault();
+            triggerSwipe('left');
+          }
+          break;
+        case 'z':
+        case 'Z':
+        case 'Backspace':
+          if (!isSynopsisExpanded) {
+            e.preventDefault();
+            handleUndo();
+          }
+          break;
+        case ' ':
+          e.preventDefault();
+          toggleSynopsis();
+          break;
+        case 'Escape':
+          if (isSynopsisExpanded) {
+            e.preventDefault();
+            setIsSynopsisExpanded(false);
+          }
+          break;
+      }
+    };
 
-    if (Math.abs(deltaX) > SWIPE_THRESHOLD) {
-      handleSwipe(deltaX > 0 ? 'right' : 'left')
-    } else {
-      // Snap back using spring animation
-      dragX.set(0)
-    }
-    setIsDragging(false)
-  }, [isDragging, currentBook, handleSwipe])
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [isLoading, isModalOpen, isSynopsisExpanded, triggerSwipe, handleUndo, toggleSynopsis]);
 
-  const handleRestart = useCallback(() => {
-    // Clear only seed books and swiped IDs, preserve matches
-    clearSeedBooks()
-    setDeck([])
-    setCurrentIndex(0)
-    setLastSwiped(null)
-    setCanUndo(false)
-    onRestart()
-  }, [onRestart])
-
-  const handleSwapBooks = useCallback(() => {
-    // Clear seed books but preserve matches, go back to onboarding
-    clearSeedBooks()
-    setDeck([])
-    setCurrentIndex(0)
-    setLastSwiped(null)
-    setCanUndo(false)
-    onRestart()
-  }, [onRestart])
+  const handleGenerateMore = useCallback(() => {
+    setReloadNonce((n) => n + 1);
+  }, []);
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-orange-500 mx-auto mb-4" aria-hidden="true" />
-          <p className="text-slate-600 dark:text-slate-400">Preparando suas recomendações...</p>
-        </div>
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4" role="status" aria-live="polite">
+        <motion.div
+          className="w-16 h-16 border-4 border-current border-t-transparent rounded-full animate-spin"
+          style={{ color: 'var(--accent-primary)' }}
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+        />
+        <p className="mt-6 text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
+          {loadingStage}
+        </p>
+        <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+          Isso pode levar alguns segundos
+        </p>
       </div>
-    )
+    );
   }
 
-  if (deck.length === 0) {
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4 text-center">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: 'var(--accent-soft)' }}>
+          <X className="w-8 h-8" style={{ color: 'var(--accent-primary)' }} />
+        </div>
+        <h3 className="font-display italic text-xl mb-2" style={{ color: 'var(--text-primary)' }}>
+          Não foi possível carregar
+        </h3>
+        <p className="text-sm mb-6 max-w-sm" style={{ color: 'var(--text-secondary)' }}>
+          {error}
+        </p>
+        <button
+          type="button"
+          onClick={handleGenerateMore}
+          className="btn-primary flex items-center justify-center gap-2 focus-ring"
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>Tentar novamente</span>
+        </button>
+      </div>
+    );
+  }
+
+  if (books.length === 0 || currentIndex >= books.length) {
     return (
       <motion.div
+        className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4 text-center"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex-1 flex flex-col items-center justify-center text-center px-6"
       >
-        <BookOpen className="w-16 h-16 text-slate-300 dark:text-slate-600 mb-4" aria-hidden="true" />
-        <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">Nenhuma recomendação encontrada</h2>
-        <p className="text-slate-500 dark:text-slate-400 mb-6 max-w-md">
-          Não encontramos livros compatíveis com sua seleção. Tente escolher outros livros favoritos.
+        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-6" style={{ backgroundColor: 'var(--accent-soft)' }}>
+          <Sparkles className="w-10 h-10" style={{ color: 'var(--accent-primary)' }} />
+        </div>
+        <h2 className="font-display italic text-2xl sm:text-3xl mb-3" style={{ color: 'var(--text-primary)' }}>
+          Você avaliou todos os {books.length || 10} livros
+        </h2>
+        <p className="text-sm sm:text-base mb-8 max-w-sm" style={{ color: 'var(--text-secondary)' }}>
+          Quer continuar descobrindo? Gere mais recomendações baseadas no seu gosto ou troque seus 3 livros base para uma nova jornada.
         </p>
-        <Button variant="secondary" onClick={handleRestart}>
-          <RotateCcw className="w-5 h-5 mr-2" aria-hidden="true" />
-          Refazer seleção
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs">
+          <button
+            type="button"
+            onClick={handleGenerateMore}
+            className="btn-primary flex items-center justify-center gap-2 focus-ring"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Gerar +10 Recomendações</span>
+          </button>
+          <button
+            type="button"
+            onClick={onBackToOnboarding}
+            className="btn-secondary flex items-center justify-center gap-2 focus-ring"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Trocar 3 Livros Base</span>
+          </button>
+        </div>
       </motion.div>
-    )
+    );
   }
 
+  const canUndo = Boolean(lastAction && currentIndex > 0 && !isAnimating);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex-1 flex flex-col items-center px-4 pb-8 relative"
-      style={{ willChange: 'transform' }}
+    <div
+      className="h-[calc(100vh-4rem)] overflow-hidden flex flex-col justify-between items-center px-4 py-3 select-none"
+      style={{ backgroundColor: 'var(--bg-canvas)' }}
     >
-      {/* Progress indicator */}
-      <motion.div
-        className="w-full max-w-md mb-6 flex items-center justify-between"
-      >
-        <span className="text-sm text-slate-500 dark:text-slate-400">
-          {deck.length > 0 ? `${Math.min(currentIndex + 1, deck.length)} de ${deck.length}` : '0 de 0'}
-        </span>
-        <div className="flex items-center gap-1">
-          {Array.from({ length: Math.min(5, deck.length) }).map((_, i) => (
-            <motion.div
-              key={i}
-              className={`h-1.5 rounded-full transition-all ${
-                i < currentIndex ? 'bg-green-400' :
-                i === currentIndex ? 'bg-orange-500' : 'bg-slate-200 dark:bg-slate-700'
-              }`}
-              style={{ width: i === currentIndex ? '24px' : '8px' }}
-            />
+      <div className="shrink-0 w-full max-w-[420px] flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+            Baseado em:
+          </span>
+          {seedBooks.map((seed) => (
+            <span key={seed.id} className="editorial-pill text-[0.65rem] font-mono truncate max-w-[110px]">
+              {seed.title}
+            </span>
           ))}
         </div>
-      </motion.div>
-
-      {/* Card Stack */}
-      <div className="relative w-full max-w-md" role="region" aria-label="Cartas de recomendação">
-        {/* Next card (behind) */}
-        {nextBook && (
-          <motion.div
-            style={{
-              transform: `scale(${CARD_SCALE_STEP}) translateY(8px)`,
-              zIndex: 0,
-            }}
-            className="pointer-events-none"
+        <div className="flex items-center gap-1.5 shrink-0">
+          {batchSource === 'fallback' && (
+            <span className="editorial-pill text-[0.6rem] font-mono" title="Acervo curado local">
+              Local
+            </span>
+          )}
+          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+            {Math.min(currentIndex + 1, books.length)} / {books.length}
+          </span>
+          <button
+            type="button"
+            onClick={onBackToOnboarding}
+            className="btn-ghost flex items-center gap-1 p-1.5 focus-ring"
+            aria-label="Trocar 3 livros base"
           >
-            <BookCard book={nextBook} compact showMatchBadge={true} />
-          </motion.div>
-        )}
-
-        {/* Current card - using motion values for 60fps animation */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentBook?.id}
-            drag="x"
-            dragConstraints={{ left: -300, right: 300 }}
-            dragMomentum={false}
-            onDragStart={handleDragStart}
-            onDrag={handleDrag}
-            onDragEnd={handleDragEnd}
-            style={{
-              x: dragX,
-              rotate: rotation,
-              opacity: opacity,
-              zIndex: 10,
-              willChange: 'transform, opacity',
-            }}
-            className="relative"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowLeft') handleSwipe('left')
-              if (e.key === 'ArrowRight') handleSwipe('right')
-              if (e.key === 'z' && (e.metaKey || e.ctrlKey)) handleUndo() // Cmd/Ctrl+Z for undo
-            }}
-          >
-            <BookCard book={currentBook!} showMatchBadge={true} />
-
-            {/* Like/Nope indicators - using motion values for smooth opacity */}
-            <motion.div
-              style={{
-                opacity: likeIndicatorOpacity,
-                scale: likeIndicatorOpacity,
-              }}
-              className="absolute top-6 left-6 transform -rotate-6 pointer-events-none"
-            >
-              <div className="w-20 h-20 rounded-full border-4 border-green-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
-                <Heart className="w-8 h-8 text-green-500" aria-hidden="true" />
-              </div>
-              <p className="text-green-600 dark:text-green-400 font-bold text-lg mt-1">QUERO LER</p>
-            </motion.div>
-            <motion.div
-              style={{
-                opacity: nopeIndicatorOpacity,
-                scale: nopeIndicatorOpacity,
-              }}
-              className="absolute top-6 right-6 transform rotate-6 pointer-events-none"
-            >
-              <div className="w-20 h-20 rounded-full border-4 border-red-400 flex items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
-                <X className="w-8 h-8 text-red-500" aria-hidden="true" />
-              </div>
-              <p className="text-red-600 dark:text-red-400 font-bold text-lg mt-1">PASSAR</p>
-            </motion.div>
-          </motion.div>
-        </AnimatePresence>
+            <RotateCcw className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Action Buttons */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="flex items-center justify-center gap-3 mt-6 w-full max-w-md"
-      >
-        <Button
-          variant="secondary"
-          size="xl"
-          className="w-16 h-16 p-0"
-          onClick={() => handleSwipe('left')}
-          aria-label="Passar"
-        >
-          <X className="w-7 h-7 text-slate-400 dark:text-slate-500" aria-hidden="true" />
-        </Button>
+      <div className="relative w-full max-w-[420px] aspect-[3/4] flex items-center justify-center my-auto">
+        {visibleBooks.map((book, i) => (
+          <BookCard
+            key={book.id}
+            book={book}
+            index={i}
+            isActive={i === 0}
+            isSynopsisExpanded={i === 0 && isSynopsisExpanded}
+            onToggleSynopsis={toggleSynopsis}
+            x={x}
+            y={y}
+            rotate={cardRotate}
+            cardOpacity={cardOpacity}
+            likeOpacity={likeOpacity}
+            passOpacity={passOpacity}
+            likeScale={likeScale}
+            passScale={passScale}
+            nextCardScale={nextCardScale}
+            nextCardY={nextCardY}
+            nextCardOpacity={nextCardOpacity}
+            thirdCardScale={i === 1 ? thirdCardScale : thirdCardScaleStable}
+            thirdCardY={i === 1 ? thirdCardY : thirdCardYStable}
+            thirdCardOpacity={i === 1 ? thirdCardOpacity : thirdCardOpacityStable}
+            dragEnd={handleDragEnd}
+          />
+        ))}
+      </div>
 
-        {/* Undo Button */}
-        <Button
-          variant={canUndo ? 'secondary' : 'ghost'}
-          size="xl"
-          className="w-16 h-16 p-0"
-          onClick={handleUndo}
-          disabled={!canUndo}
-          aria-label="Desfazer último swipe"
-          style={{ opacity: canUndo ? 1 : 0.4 }}
-        >
-          <UndoIcon className="w-7 h-7 text-orange-500" aria-hidden="true" />
-        </Button>
-
-        <Button
-          variant="primary"
-          size="xl"
-          className="w-16 h-16 p-0 shadow-soft-orange"
-          onClick={() => handleSwipe('right')}
-          aria-label="Quero ler"
-        >
-          <Heart className="w-7 h-7 text-white" aria-hidden="true" />
-        </Button>
-      </motion.div>
-
-      {/* Control Buttons */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="mt-6 flex flex-col items-center gap-3"
-      >
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={handleSwapBooks}>
-            <RotateCcw className="w-4 h-4 mr-1.5" aria-hidden="true" />
-            Trocar 3 Livros
-          </Button>
-          <Button variant="ghost" size="sm" onClick={handleRestart}>
-            <ArrowLeft className="w-4 h-4 mr-1.5" aria-hidden="true" />
-            Reiniciar Do Zero
-          </Button>
-        </div>
-      </motion.div>
-
-      {/* Match Modal */}
-      <AnimatePresence>
-        {showMatchModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
-            onClick={() => setShowMatchModal(null)}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="match-title"
+      <div className="shrink-0 flex flex-col items-center gap-2 pt-2 w-full max-w-[420px]">
+        <div className="flex items-center justify-center gap-3">
+          <motion.button
+            type="button"
+            onClick={() => triggerSwipe('left')}
+            disabled={!activeBook || isAnimating}
+            className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 border focus-ring disabled:opacity-40"
+            style={{
+              borderColor: 'var(--border-subtle)',
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--accent-primary)',
+            }}
+            aria-label="Passar (Seta Esquerda)"
+            whileHover={{ scale: 1.08, boxShadow: '0 8px 28px rgba(239, 68, 68, 0.28)', borderColor: 'var(--accent-primary)' }}
+            whileTap={{ scale: 0.95 }}
           >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[90vh] overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="relative aspect-[2/3] overflow-hidden">
-                {showMatchModal.thumbnail ? (
-                  <img
-                    src={showMatchModal.thumbnail}
-                    alt={`Capa do livro ${showMatchModal.title}`}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
-                    <BookOpen className="w-20 h-20 text-white/30" aria-hidden="true" />
-                  </div>
-                )}
-                <div className="absolute top-4 right-4">
-                  <Badge variant="default" className="shadow-lg bg-orange-500 text-white">
-                    {showMatchModal.matchPercentage}% Match
-                  </Badge>
-                </div>
-              </div>
+            <X className="w-6 h-6" />
+          </motion.button>
 
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 id="match-title" className="text-xl font-bold text-slate-800 dark:text-slate-100">
-                    {showMatchModal.title}
-                  </h3>
-                  <button
-                    onClick={() => setShowMatchModal(null)}
-                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1"
-                    aria-label="Fechar"
-                  >
-                    <X className="w-6 h-6" aria-hidden="true" />
-                  </button>
-                </div>
+          <motion.button
+            type="button"
+            onClick={handleUndo}
+            disabled={!canUndo}
+            className="px-5 h-11 rounded-full flex items-center justify-center gap-2 transition-all duration-200 border font-mono text-xs focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              borderColor: 'var(--border-subtle)',
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--text-secondary)',
+            }}
+            aria-label="Desfazer (Z ou Backspace)"
+            whileHover={canUndo ? { scale: 1.05, borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' } : undefined}
+            whileTap={canUndo ? { scale: 0.95 } : undefined}
+          >
+            <Undo2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Desfazer</span>
+          </motion.button>
 
-                <p className="text-slate-600 dark:text-slate-400 mb-4">{showMatchModal.authors.join(', ')}</p>
+          <motion.button
+            type="button"
+            onClick={() => triggerSwipe('right')}
+            disabled={!activeBook || isAnimating}
+            className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 shadow-lg focus-ring disabled:opacity-40"
+            style={{
+              backgroundColor: 'var(--accent-primary)',
+              color: 'white',
+              boxShadow: '0 8px 32px rgba(234, 88, 12, 0.4)',
+            }}
+            aria-label="Quero Ler (Seta Direita)"
+            whileHover={{ scale: 1.08, boxShadow: '0 12px 40px rgba(234, 88, 12, 0.5)' }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Heart className="w-6 h-6" />
+          </motion.button>
+        </div>
 
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {showMatchModal.categories.slice(0, 3).map((cat, i) => (
-                    <Badge key={i} variant="outline" size="sm">{cat}</Badge>
-                  ))}
-                </div>
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={toggleSynopsis}
+            disabled={!activeBook || isAnimating}
+            className="btn-secondary flex items-center gap-2 px-4 focus-ring disabled:opacity-40"
+            aria-label="Detalhes (Espaço)"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span className="font-mono text-xs">{isSynopsisExpanded ? 'Fechar Sinopse' : 'Sinopse'}</span>
+          </button>
+        </div>
 
-                <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed mb-6 line-clamp-4">
-                  {showMatchModal.shortDescription}
-                </p>
+        <p className="text-center text-xs" style={{ color: 'var(--text-muted)' }}>
+          Atalhos: ← Passar • → Quero Ler • Z Desfazer • Espaço Sinopse
+        </p>
+      </div>
 
-                <div className="flex gap-3">
-                  {showMatchModal.previewLink && (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => window.open(showMatchModal.previewLink, '_blank')}
-                    >
-                      <ExternalLink className="w-4 h-4 mr-1.5" aria-hidden="true" />
-                      Visualizar
-                    </Button>
-                  )}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => window.open(showMatchModal.infoLink, '_blank')}
-                  >
-                    <ExternalLink className="w-4 h-4 mr-1.5" aria-hidden="true" />
-                    Mais detalhes
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  )
+      <ToastContainer toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
+    </div>
+  );
 }

@@ -1,298 +1,444 @@
-import { useState, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { X, Heart, ExternalLink, BookOpen, Star, Calendar, Trash2, Loader2 } from 'lucide-react'
-import { getMatches, removeMatch } from '../utils/storage'
-import type { Book } from '../types/book'
-import { Button, Badge } from './ui'
-import { BookCard } from './BookCard'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Heart, BookOpen, Search, ChevronDown, ExternalLink, Trash2 } from 'lucide-react';
+import type { MatchBook } from '../types/book';
+import { EditorialCover } from './EditorialCover';
+import { useMatchBook } from '../hooks/useMatchBook';
 
-export function MatchesLibrary({ onClose }: { onClose: () => void }) {
-  const [matches, setMatches] = useState<Book[]>([])
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
-  const [removingId, setRemovingId] = useState<string | null>(null)
-  const [isMounted, setIsMounted] = useState(false)
+interface MatchesLibraryProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
 
+const SORT_OPTIONS = [
+  { value: 'match', label: 'Maior % Match' },
+  { value: 'recent', label: 'Mais Recentes' },
+] as const;
+
+export function MatchesLibrary({ isOpen, onClose }: MatchesLibraryProps) {
+  const { matches, deleteMatch } = useMatchBook();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'match' | 'recent'>('match');
+  const [selectedBook, setSelectedBook] = useState<MatchBook | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Global Escape & basic focus trap when modal is open
   useEffect(() => {
-    setIsMounted(true)
-    setMatches(getMatches())
-  }, [])
+    if (!isOpen) return;
 
-  // Handle ESC key to close
-  useEffect(() => {
-    if (!isMounted) return
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose()
+        e.preventDefault();
+        if (selectedBook) {
+          setSelectedBook(null);
+        } else {
+          onClose();
+        }
+        return;
       }
+
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [isOpen, selectedBook, onClose]);
+
+  const filteredMatches = useMemo(() => {
+    let result = [...matches];
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter(
+        (book) =>
+          book.title.toLowerCase().includes(query) ||
+          book.author.toLowerCase().includes(query) ||
+          book.categories.some((c) => c.toLowerCase().includes(query))
+      );
     }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isMounted, onClose])
 
-  const handleRemove = useCallback((bookId: string) => {
-    setRemovingId(bookId)
-    removeMatch(bookId)
-    setMatches(prev => prev.filter(b => b.id !== bookId))
-    setRemovingId(null)
-  }, [])
+    if (sortBy === 'match') {
+      result.sort((a, b) => b.matchPercentage - a.matchPercentage);
+    } else {
+      result.sort((a, b) => b.matchedAt - a.matchedAt);
+    }
 
-  if (!isMounted) {
-    return null
-  }
+    return result;
+  }, [matches, searchQuery, sortBy]);
+
+  const handleRemove = useCallback(
+    (bookId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      deleteMatch(bookId);
+      if (selectedBook?.id === bookId) {
+        setSelectedBook(null);
+      }
+    },
+    [deleteMatch, selectedBook]
+  );
+
+  const handleOpenAmazon = useCallback((book: MatchBook) => {
+    const query = encodeURIComponent(`${book.title} ${book.author}`);
+    window.open(`https://www.amazon.com.br/s?k=${query}`, '_blank', 'noopener,noreferrer');
+  }, []);
+
+  const handleOpenGoogleBooks = useCallback((book: MatchBook) => {
+    const query = encodeURIComponent(`${book.title} ${book.author}`);
+    window.open(`https://www.google.com/search?tbm=bks&q=${query}`, '_blank', 'noopener,noreferrer');
+  }, []);
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        onClick={onClose}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="library-title"
-      >
-        {/* Backdrop/Overlay */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-          aria-hidden="true"
-        />
-
-        {/* Modal Container */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="relative w-full max-w-3xl max-h-[85vh] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col bg-white dark:bg-slate-900"
-          onClick={e => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm z-10">
-            <div className="flex items-center gap-2">
-              <span className="text-xl font-bold text-slate-800 dark:text-slate-100">Match</span>
-              <span className="text-xl font-bold text-orange-500">Book</span>
-            </div>
-            <h2 id="library-title" className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex-1 text-center">
-              Minha Biblioteca ({matches.length})
-            </h2>
-            <motion.button
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              onClick={onClose}
-              className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all focus:outline-none focus:ring-2 focus:ring-orange-500"
-              aria-label="Fechar biblioteca"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <X className="w-5 h-5" aria-hidden="true" />
-            </motion.button>
-          </div>
-
-          {/* Content */}
+    <>
+      <AnimatePresence>
+        {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="flex-1 overflow-y-auto p-6"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="library-title"
           >
-            {matches.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
-                <motion.div
-                  initial={{ scale: 0.8 }}
-                  animate={{ scale: 1 }}
-                  className="w-20 h-20 rounded-2xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center mb-6 shadow-lg shadow-orange-500/25"
-                >
-                  <Heart className="w-10 h-10 text-white" aria-hidden="true" />
-                </motion.div>
-                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">Nenhum match ainda</h3>
-                <p className="text-slate-500 dark:text-slate-400 max-w-xs">
-                  Comece a deslizar para descobrir livros incríveis e salvá-los aqui!
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {matches.map((book, index) => (
-                  <AnimatePresence key={book.id}>
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: -20 }}
-                      transition={{ delay: index * 0.05 }}
-                      className="relative group"
-                    >
-                      <BookCard
-                        book={book}
-                        compact
-                        showMatchBadge={true}
-                        onClick={() => setSelectedBook(book)}
-                      />
-                      <motion.button
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.8 }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleRemove(book.id)
-                        }}
-                        disabled={removingId === book.id}
-                        className="absolute top-2 right-2 w-8 h-8 rounded-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-200 dark:hover:border-red-900 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
-                        aria-label={`Remover ${book.title} da biblioteca`}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                      >
-                        {removingId === book.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" aria-hidden="true" />
-                        )}
-                      </motion.button>
-                    </motion.div>
-                  </AnimatePresence>
-                ))}
-              </div>
-            )}
-          </motion.div>
-        </motion.div>
-
-        {/* Book Detail Modal */}
-        <AnimatePresence>
-          {selectedBook && (
             <motion.div
+              className="absolute inset-0"
+              style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)', backdropFilter: 'blur(8px)' }}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
-              onClick={() => setSelectedBook(null)}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="detail-title"
+            />
+
+            <motion.div
+              ref={dialogRef}
+              tabIndex={-1}
+              className="relative w-full max-w-4xl max-h-[86vh] rounded-3xl border flex flex-col overflow-hidden shadow-2xl focus:outline-none"
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border-subtle)',
+              }}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
             >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[90vh] overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800"
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="relative aspect-[2/3] overflow-hidden">
-                  {selectedBook.thumbnail ? (
-                    <img
-                      src={selectedBook.thumbnail}
-                      alt={`Capa do livro ${selectedBook.title}`}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
-                      <BookOpen className="w-20 h-20 text-white/30" aria-hidden="true" />
-                    </div>
-                  )}
-                  <div className="absolute top-4 right-4">
-                    <Badge variant="default" className="shadow-lg bg-orange-500 text-white">
-                      {selectedBook.matchPercentage}% Match
-                    </Badge>
-                  </div>
+              <header className="flex items-center justify-between px-6 py-5 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="flex items-center gap-3">
+                  <h2 id="library-title" className="font-display italic text-xl sm:text-2xl" style={{ color: 'var(--text-primary)' }}>
+                    Minha Biblioteca
+                  </h2>
+                  <span
+                    className="px-2.5 py-0.5 rounded-full text-xs font-mono"
+                    style={{
+                      backgroundColor: 'var(--accent-soft)',
+                      color: 'var(--accent-primary)',
+                      border: '1px solid var(--accent-primary)',
+                    }}
+                  >
+                    {matches.length}
+                  </span>
                 </div>
 
-                <div className="p-6">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 pr-4">
-                      <h3 id="detail-title" className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1">
-                        {selectedBook.title}
-                      </h3>
-                      <p className="text-slate-600 dark:text-slate-400">{selectedBook.authors.join(', ')}</p>
+                <button
+                  onClick={onClose}
+                  className="btn-ghost p-2 rounded-xl flex items-center justify-center focus-ring"
+                  aria-label="Fechar (Esc)"
+                  style={{ width: 44, height: 44 }}
+                >
+                  <X className="w-5 h-5" />
+                  <span className="sr-only">Fechar</span>
+                </button>
+              </header>
+
+              <div className="px-6 py-4 border-b flex flex-col sm:flex-row gap-3" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar por título, autor ou gênero..."
+                    className="input-editorial with-icon pr-4"
+                    aria-label="Buscar na biblioteca"
+                  />
+                </div>
+
+                <div className="relative">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'match' | 'recent')}
+                    className="input-editorial pr-10 appearance-none cursor-pointer"
+                    aria-label="Ordenar por"
+                  >
+                    {SORT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-hidden">
+                {filteredMatches.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-64 px-6 text-center">
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ backgroundColor: 'var(--accent-soft)' }}>
+                      <Heart className="w-8 h-8" style={{ color: 'var(--accent-primary)' }} />
                     </div>
-                    <button
-                      onClick={() => setSelectedBook(null)}
-                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1 flex-shrink-0"
-                      aria-label="Fechar"
-                    >
-                      <X className="w-6 h-6" aria-hidden="true" />
-                    </button>
+                    <h3 className="font-display italic text-lg mb-2" style={{ color: 'var(--text-primary)' }}>
+                      {searchQuery ? 'Nenhum livro encontrado' : 'Sua biblioteca está vazia'}
+                    </h3>
+                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                      {searchQuery
+                        ? 'Tente outro termo de busca'
+                        : 'Dê match em livros na arena para salvá-los aqui'}
+                    </p>
                   </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-6 overflow-y-auto scrollbar-thin max-h-[60vh]">
+                    {filteredMatches.map((book, index) => (
+                      <motion.button
+                        key={book.id}
+                        onClick={() => setSelectedBook(book)}
+                        className="group relative flex flex-col h-full p-3 rounded-2xl transition-all duration-200 text-left focus-ring"
+                        style={{
+                          backgroundColor: 'var(--bg-elevated)',
+                          border: '1px solid var(--border-subtle)',
+                        }}
+                        whileHover={{ y: -2, boxShadow: '0 12px 32px -8px rgba(0, 0, 0, 0.15)' }}
+                        initial={{ opacity: 0, y: 16 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.025, duration: 0.2 }}
+                        aria-label={`Ver detalhes de ${book.title}`}
+                      >
+                        <div className="relative aspect-[2/3] w-full mx-auto max-w-xs mb-3 overflow-hidden rounded-xl">
+                          {book.coverUrl ? (
+                            <img
+                              src={book.coverUrl}
+                              alt={`Capa de ${book.title}`}
+                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <EditorialCover
+                              title={book.title}
+                              author={book.author}
+                              category={book.categories[0]}
+                              className="w-full h-full"
+                            />
+                          )}
+                          <div className="absolute top-2 left-2 z-10">
+                            <span className="editorial-badge flex items-center gap-1">
+                              <span className="font-mono">{book.matchPercentage}%</span>
+                              <span>MATCH</span>
+                            </span>
+                          </div>
+                        </div>
 
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400 mb-4">
-                    {selectedBook.year && (
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-4 h-4" aria-hidden="true" />
-                        {selectedBook.year}
-                      </span>
-                    )}
-                    {selectedBook.pageCount && (
-                      <span className="flex items-center gap-1">
-                        <BookOpen className="w-4 h-4" aria-hidden="true" />
-                        {selectedBook.pageCount} págs
-                      </span>
-                    )}
-                    {selectedBook.averageRating > 0 && (
-                      <span className="flex items-center gap-1">
-                        <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" />
-                        {selectedBook.averageRating.toFixed(1)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {selectedBook.categories.slice(0, 4).map((cat, i) => (
-                      <Badge key={i} variant="outline" size="sm">{cat}</Badge>
+                        <div className="flex-1 flex flex-col min-h-0">
+                          <h4 className="font-display italic text-base leading-tight mb-1 line-clamp-2" style={{ color: 'var(--text-primary)' }}>
+                            {book.title}
+                          </h4>
+                          <p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>
+                            {book.author}
+                          </p>
+                          <div className="flex flex-wrap gap-1 mt-auto">
+                            {book.categories.slice(0, 2).map((cat, i) => (
+                              <span key={i} className="editorial-pill text-[0.6rem]">
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.button>
                     ))}
                   </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-                  <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed mb-6 line-clamp-5">
-                    {selectedBook.description}
-                  </p>
+      <AnimatePresence>
+        {selectedBook && (
+          <motion.div
+            className="fixed inset-0 z-60 flex items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedBook(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="detail-title"
+          >
+            <motion.div
+              className="absolute inset-0"
+              style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(12px)' }}
+            />
 
-                  <div className="flex gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                    {selectedBook.previewLink && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => window.open(selectedBook.previewLink, '_blank')}
-                      >
-                        <ExternalLink className="w-4 h-4 mr-1.5" aria-hidden="true" />
-                        Visualizar
-                      </Button>
-                    )}
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => window.open(selectedBook.infoLink, '_blank')}
-                    >
-                      <ExternalLink className="w-4 h-4 mr-1.5" aria-hidden="true" />
-                      Mais detalhes
-                    </Button>
+            <motion.div
+              className="relative w-full max-w-2xl max-h-[90vh] rounded-3xl border flex flex-col overflow-hidden shadow-2xl"
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border-subtle)',
+              }}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <header className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+                <h3 id="detail-title" className="font-display italic text-lg" style={{ color: 'var(--text-primary)' }}>
+                  Detalhes do Livro
+                </h3>
+                <button
+                  onClick={() => setSelectedBook(null)}
+                  className="btn-ghost p-2 rounded-xl focus-ring"
+                  aria-label="Fechar (Esc)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </header>
+
+              <div className="flex-1 overflow-y-auto scrollbar-thin p-6">
+                <div className="flex flex-col sm:flex-row gap-6">
+                  <div className="flex-shrink-0 w-full sm:w-48 mx-auto sm:mx-0">
+                    <div className="aspect-[2/3] rounded-xl overflow-hidden relative">
+                      {selectedBook.coverUrl ? (
+                        <img
+                          src={selectedBook.coverUrl}
+                          alt={`Capa de ${selectedBook.title}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <EditorialCover
+                          title={selectedBook.title}
+                          author={selectedBook.author}
+                          category={selectedBook.categories[0]}
+                          className="w-full h-full"
+                        />
+                      )}
+                      <div className="absolute top-3 left-3">
+                        <span className="editorial-badge flex items-center gap-1">
+                          <span className="font-mono">{selectedBook.matchPercentage}%</span>
+                          <span>MATCH</span>
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    className="w-full mt-3"
-                    onClick={() => handleRemove(selectedBook.id)}
-                    disabled={removingId === selectedBook.id}
-                  >
-                    {removingId === selectedBook.id ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" />
-                        Removendo...
-                      </>
-                    ) : (
-                      <>
-                        <Trash2 className="w-4 h-4 mr-2" aria-hidden="true" />
-                        Remover da biblioteca
-                      </>
+                  <div className="flex-1 flex flex-col">
+                    <h4 className="font-display italic text-xl sm:text-2xl leading-tight mb-1" style={{ color: 'var(--text-primary)' }}>
+                      {selectedBook.title}
+                    </h4>
+
+                    {selectedBook.originalTitle && selectedBook.originalTitle !== selectedBook.title && (
+                      <p className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>
+                        <em>{selectedBook.originalTitle}</em>
+                      </p>
                     )}
-                  </Button>
+
+                    <p className="text-base mb-4" style={{ color: 'var(--text-secondary)' }}>
+                      {selectedBook.author}
+                      {selectedBook.publishedYear && (
+                        <span className="font-mono text-sm ml-2" style={{ color: 'var(--text-muted)' }}>
+                          • {selectedBook.publishedYear}
+                        </span>
+                      )}
+                      {selectedBook.pageCount && (
+                        <span className="font-mono text-sm ml-2" style={{ color: 'var(--text-muted)' }}>
+                          • {selectedBook.pageCount} págs
+                        </span>
+                      )}
+                    </p>
+
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {selectedBook.categories.map((cat, i) => (
+                        <span key={i} className="editorial-pill text-sm">
+                          {cat}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div
+                      className="mb-6 p-4 rounded-2xl flex flex-col gap-2"
+                      style={{
+                        backgroundColor: 'var(--accent-soft)',
+                        border: '1px solid var(--accent-primary)',
+                      }}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium" style={{ color: 'var(--accent-primary)' }}>
+                        <Heart className="w-4 h-4 flex-shrink-0" />
+                        <span>Por que deu match</span>
+                      </div>
+                      <p className="text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                        {selectedBook.matchReason}
+                      </p>
+                    </div>
+
+                    <div className="mb-6">
+                      <h5 className="font-medium text-sm mb-2" style={{ color: 'var(--text-primary)' }}>
+                        Sinopse
+                      </h5>
+                      <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                        {selectedBook.synopsis}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 mt-auto pt-4 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <button
+                        onClick={() => handleOpenAmazon(selectedBook)}
+                        className="btn-secondary flex items-center gap-2 flex-1 sm:flex-initial justify-center"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        <span>Amazon</span>
+                      </button>
+                      <button
+                        onClick={() => handleOpenGoogleBooks(selectedBook)}
+                        className="btn-secondary flex items-center gap-2 flex-1 sm:flex-initial justify-center"
+                      >
+                        <BookOpen className="w-4 h-4" />
+                        <span>Google Books</span>
+                      </button>
+                      <button
+                        onClick={(e) => handleRemove(selectedBook.id, e)}
+                        className="btn-ghost flex items-center gap-2 text-red-500 hover:text-red-400 p-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span className="text-sm">Remover</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </motion.div>
+              </div>
             </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
-    </AnimatePresence>
-  )
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
 }
