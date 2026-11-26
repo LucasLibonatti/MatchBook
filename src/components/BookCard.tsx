@@ -1,8 +1,20 @@
 import { useState, useCallback } from 'react';
-import { motion, useSpring, useTransform, AnimatePresence, type MotionValue, type PanInfo } from 'framer-motion';
+import {
+  motion,
+  useMotionValue,
+  useTransform,
+  AnimatePresence,
+  type PanInfo,
+  type Variants,
+} from 'framer-motion';
 import { X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import type { BookRecommendation } from '../types/book';
 import { EditorialCover } from './EditorialCover';
+
+export interface SwipeTransition {
+  direction: 'left' | 'right';
+  mode: 'swipe' | 'undo';
+}
 
 interface BookCardProps {
   book: BookRecommendation;
@@ -10,22 +22,64 @@ interface BookCardProps {
   isActive: boolean;
   isSynopsisExpanded: boolean;
   onToggleSynopsis: () => void;
-  x: MotionValue<number>;
-  y: MotionValue<number>;
-  rotate: MotionValue<number>;
-  cardOpacity: MotionValue<number>;
-  likeOpacity: MotionValue<number>;
-  passOpacity: MotionValue<number>;
-  likeScale: MotionValue<number>;
-  passScale: MotionValue<number>;
-  nextCardScale: MotionValue<number>;
-  nextCardY: MotionValue<number>;
-  nextCardOpacity: MotionValue<number>;
-  thirdCardScale: MotionValue<number>;
-  thirdCardY: MotionValue<number>;
-  thirdCardOpacity: MotionValue<number>;
-  dragEnd: (offsetX: number, offsetY: number, velocityX: number) => void;
+  onSwipe: (direction: 'left' | 'right') => void;
+  swipeTransition: SwipeTransition;
 }
+
+const CARD_VARIANTS: Variants = {
+  initialActive: (custom: SwipeTransition) =>
+    custom.mode === 'undo'
+      ? {
+          x: custom.direction === 'right' ? 380 : -380,
+          y: 20,
+          scale: 1,
+          opacity: 0,
+        }
+      : {
+          x: 0,
+          y: 12,
+          scale: 0.96,
+          opacity: 0,
+        },
+  initialBack: {
+    x: 0,
+    y: 36,
+    scale: 0.84,
+    opacity: 0,
+  },
+  active: {
+    x: 0,
+    y: 0,
+    scale: 1,
+    opacity: 1,
+  },
+  next: {
+    x: 0,
+    y: 14,
+    scale: 0.94,
+    opacity: 0.72,
+  },
+  third: {
+    x: 0,
+    y: 28,
+    scale: 0.88,
+    opacity: 0.42,
+  },
+  exit: (custom: SwipeTransition) =>
+    custom.mode === 'undo'
+      ? {
+          scale: 0.82,
+          y: 40,
+          opacity: 0,
+          transition: { duration: 0.18 },
+        }
+      : {
+          x: custom.direction === 'right' ? 560 : -560,
+          y: 28,
+          opacity: 0,
+          transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
+        },
+};
 
 export function BookCard({
   book,
@@ -33,21 +87,8 @@ export function BookCard({
   isActive,
   isSynopsisExpanded,
   onToggleSynopsis,
-  x,
-  y,
-  rotate,
-  cardOpacity,
-  likeOpacity,
-  passOpacity,
-  likeScale,
-  passScale,
-  nextCardScale,
-  nextCardY,
-  nextCardOpacity,
-  thirdCardScale,
-  thirdCardY,
-  thirdCardOpacity,
-  dragEnd,
+  onSwipe,
+  swipeTransition,
 }: BookCardProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
@@ -55,15 +96,14 @@ export function BookCard({
   const imageError = !book.coverUrl || failedUrl === book.coverUrl;
   const imageLoading = Boolean(book.coverUrl && !imageError && loadedUrl !== book.coverUrl);
 
-  const springX = useSpring(x, { stiffness: 400, damping: 30, mass: 0.7 });
-  const springY = useSpring(y, { stiffness: 400, damping: 30, mass: 0.7 });
-  const springRotate = useSpring(rotate, { stiffness: 400, damping: 30, mass: 0.7 });
-  const springLikeOpacity = useSpring(likeOpacity, { stiffness: 350, damping: 28 });
-  const springPassOpacity = useSpring(passOpacity, { stiffness: 350, damping: 28 });
-  const springLikeScale = useSpring(likeScale, { stiffness: 350, damping: 28 });
-  const springPassScale = useSpring(passScale, { stiffness: 350, damping: 28 });
-
-  // Red on left (Passar), Green on right (Quero Ler) — reactive MotionValue
+  // Isolated MotionValues per card instance so exiting cards never interfere with incoming cards
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const rotate = useTransform(x, [-260, 0, 260], [-18, 0, 18]);
+  const likeOpacity = useTransform(x, [24, 120], [0, 1]);
+  const passOpacity = useTransform(x, [-24, -120], [0, 1]);
+  const likeScale = useTransform(x, [24, 120], [0.82, 1]);
+  const passScale = useTransform(x, [-24, -120], [0.82, 1]);
   const boxShadowGlow = useTransform(
     x,
     [-220, 0, 220],
@@ -76,9 +116,14 @@ export function BookCard({
 
   const handleDragEnd = useCallback(
     (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-      dragEnd(info.offset.x, info.offset.y, info.velocity.x);
+      const shouldSwipe = Math.abs(info.offset.x) > 100 || Math.abs(info.velocity.x) > 450;
+      if (!shouldSwipe) return;
+
+      const direction =
+        info.offset.x > 0 || (info.offset.x === 0 && info.velocity.x > 0) ? 'right' : 'left';
+      onSwipe(direction);
     },
-    [dragEnd]
+    [onSwipe]
   );
 
   const handleExpandClick = useCallback(
@@ -90,30 +135,33 @@ export function BookCard({
     [onToggleSynopsis]
   );
 
-  const zIndex = isActive ? 10 : index === 1 ? 9 : 8;
-
-  const cardStyle = {
-    transformOrigin: 'center center' as const,
-    x: isActive ? springX : 0,
-    y: isActive ? springY : index === 1 ? nextCardY : thirdCardY,
-    rotate: isActive ? springRotate : 0,
-    scale: isActive ? 1 : index === 1 ? nextCardScale : thirdCardScale,
-    opacity: isActive ? cardOpacity : index === 1 ? nextCardOpacity : thirdCardOpacity,
-    zIndex,
-    boxShadow: isActive ? boxShadowGlow : 'none',
-  };
+  const zIndex = isActive ? 30 : index === 1 ? 20 : 10;
+  const animateVariant = isActive ? 'active' : index === 1 ? 'next' : 'third';
 
   return (
     <motion.div
-      className="absolute inset-0 w-full h-full max-w-[420px] rounded-3xl overflow-hidden select-none"
-      style={cardStyle}
+      className={`absolute inset-0 w-full h-full max-w-[420px] lg:max-w-[820px] mx-auto rounded-3xl overflow-hidden select-none shadow-2xl ${
+        isActive ? 'cursor-grab active:cursor-grabbing' : 'pointer-events-none'
+      }`}
+      variants={CARD_VARIANTS}
+      custom={swipeTransition}
+      initial={index === 0 ? 'initialActive' : 'initialBack'}
+      animate={animateVariant}
+      exit="exit"
+      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.8 }}
+      style={{
+        transformOrigin: 'center center',
+        x,
+        y,
+        rotate,
+        zIndex,
+        boxShadow: isActive ? boxShadowGlow : 'none',
+      }}
       drag={isActive && !isSynopsisExpanded}
-      dragConstraints={{ left: 0, right: 0, top: -50, bottom: 50 }}
-      dragElastic={0.35}
-      dragMomentum={true}
+      dragSnapToOrigin
+      dragElastic={0.85}
       onDragEnd={isActive ? handleDragEnd : undefined}
       aria-label={isActive ? `${book.title} por ${book.author}, ${book.matchPercentage}% match` : undefined}
-      whileHover={isActive && !isSynopsisExpanded ? { scale: 1.005, transition: { duration: 0.15 } } : undefined}
     >
       <div className="absolute inset-0 bg-white dark:bg-[#141418] border border-black/5 dark:border-white/10" />
 
@@ -121,7 +169,7 @@ export function BookCard({
         <>
           <motion.div
             className="absolute top-4 left-4 z-20 pointer-events-none -rotate-12"
-            style={{ opacity: springLikeOpacity, scale: springLikeScale }}
+            style={{ opacity: likeOpacity, scale: likeScale }}
           >
             <div
               className="px-4 py-2 rounded-xl font-mono font-bold text-xs tracking-wider border-4 text-white backdrop-blur-sm"
@@ -137,7 +185,7 @@ export function BookCard({
 
           <motion.div
             className="absolute top-4 right-4 z-20 pointer-events-none rotate-12"
-            style={{ opacity: springPassOpacity, scale: springPassScale }}
+            style={{ opacity: passOpacity, scale: passScale }}
           >
             <div
               className="px-4 py-2 rounded-xl font-mono font-bold text-xs tracking-wider border-4 text-white backdrop-blur-sm"
@@ -153,9 +201,10 @@ export function BookCard({
         </>
       )}
 
-      <div className="relative z-10 h-full flex flex-col">
+      {/* Responsive Editorial Layout: vertical stack on mobile, split 2-column showcase on desktop */}
+      <div className="relative z-10 h-full flex flex-col lg:flex-row">
         <div
-          className="relative w-full h-[220px] sm:h-[245px] flex items-center justify-center py-3 overflow-hidden"
+          className="relative w-full h-[175px] sm:h-[200px] lg:w-[300px] lg:h-full shrink-0 flex items-center justify-center p-3 lg:p-6 overflow-hidden"
           style={{ backgroundColor: 'var(--bg-elevated)' }}
         >
           {!imageError && book.coverUrl && (
@@ -169,7 +218,7 @@ export function BookCard({
             />
           )}
 
-          <div className="relative z-10 h-full aspect-[2/3] rounded-lg shadow-2xl overflow-hidden">
+          <div className="relative z-10 h-full lg:h-auto lg:w-full max-h-full aspect-[2/3] rounded-xl shadow-2xl overflow-hidden">
             {imageLoading && (
               <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'var(--bg-elevated)' }}>
                 <div
@@ -186,7 +235,13 @@ export function BookCard({
                 alt={`Capa de ${book.title}`}
                 className="w-full h-full object-contain transition-opacity duration-300"
                 style={{ opacity: imageLoading ? 0 : 1 }}
-                onLoad={() => setLoadedUrl(book.coverUrl ?? null)}
+                onLoad={(e) => {
+                  if (e.currentTarget.naturalWidth < 100 || e.currentTarget.naturalHeight < 120) {
+                    setFailedUrl(book.coverUrl ?? null);
+                    return;
+                  }
+                  setLoadedUrl(book.coverUrl ?? null);
+                }}
                 onError={() => setFailedUrl(book.coverUrl ?? null)}
               />
             )}
@@ -202,8 +257,8 @@ export function BookCard({
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col p-4 sm:p-5 overflow-hidden min-h-0" style={{ backgroundColor: 'var(--bg-surface)' }}>
-          <div className="flex items-start justify-between gap-3 mb-2.5">
+        <div className="flex-1 flex flex-col p-4 sm:p-5 lg:p-6 overflow-hidden min-h-0" style={{ backgroundColor: 'var(--bg-surface)' }}>
+          <div className="flex items-start justify-between gap-3 mb-2 lg:mb-3">
             <div
               className="flex items-center gap-1.5 px-3 py-1 rounded-full"
               style={{
@@ -237,30 +292,30 @@ export function BookCard({
             </div>
           </div>
 
-          <h2 className="font-display italic text-xl sm:text-2xl leading-tight line-clamp-2 mb-0.5" style={{ color: 'var(--text-primary)' }}>
+          <h2 className="font-display italic text-xl sm:text-2xl lg:text-3xl leading-tight line-clamp-2 mb-0.5" style={{ color: 'var(--text-primary)' }}>
             {book.title}
           </h2>
 
           {book.originalTitle && book.originalTitle !== book.title && (
-            <p className="text-xs line-clamp-1 mb-0.5" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-xs lg:text-sm line-clamp-1 mb-0.5" style={{ color: 'var(--text-muted)' }}>
               <em>{book.originalTitle}</em>
             </p>
           )}
 
-          <p className="text-sm font-medium mb-2.5" style={{ color: 'var(--text-secondary)' }}>
+          <p className="text-sm lg:text-base font-medium mb-2 lg:mb-3" style={{ color: 'var(--text-secondary)' }}>
             {book.author}
           </p>
 
-          <div className="flex flex-wrap gap-1.5 mb-2.5" role="list" aria-label="Categorias">
+          <div className="flex flex-wrap gap-1.5 mb-2 lg:mb-3" role="list" aria-label="Categorias">
             {book.categories.slice(0, 3).map((cat, i) => (
-              <span key={i} className="editorial-pill text-[0.65rem] shrink-0">
+              <span key={i} className="editorial-pill text-[0.65rem] lg:text-xs shrink-0">
                 {cat}
               </span>
             ))}
           </div>
 
           <div
-            className="p-2.5 rounded-xl flex flex-col gap-1 mb-3"
+            className="p-2.5 lg:p-3.5 rounded-xl flex flex-col gap-1 mb-2.5 lg:mb-3"
             style={{
               backgroundColor: 'var(--accent-soft)',
               border: '1px solid var(--accent-primary)',
@@ -270,20 +325,20 @@ export function BookCard({
               <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
               <span>Por que combina com você</span>
             </div>
-            <p className="text-xs sm:text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text-primary)' }}>
+            <p className="text-xs sm:text-sm leading-relaxed line-clamp-2 lg:line-clamp-3" style={{ color: 'var(--text-primary)' }}>
               {book.matchReason}
             </p>
           </div>
 
           <div className="flex-1 min-h-0 flex flex-col">
-            <p className="text-xs sm:text-sm leading-relaxed line-clamp-3 flex-1" style={{ color: 'var(--text-secondary)' }}>
+            <p className="text-xs sm:text-sm leading-relaxed line-clamp-3 lg:line-clamp-5" style={{ color: 'var(--text-secondary)' }}>
               {book.synopsis}
             </p>
             <button
               type="button"
               onClick={handleExpandClick}
               onPointerDown={(e) => e.stopPropagation()}
-              className="mt-2 text-xs sm:text-sm font-medium flex items-center gap-1 transition-colors self-start focus-ring"
+              className="mt-auto pt-2 text-xs sm:text-sm font-medium flex items-center gap-1 transition-colors self-start shrink-0 focus-ring"
               style={{ color: 'var(--accent-primary)' }}
               aria-label={`Expandir sinopse de ${book.title}`}
             >
@@ -308,15 +363,15 @@ export function BookCard({
             aria-labelledby="synopsis-title"
           >
             <div
-              className="flex items-center justify-between px-4 py-3 border-b sticky top-0 z-10"
+              className="flex items-center justify-between px-5 py-3.5 border-b sticky top-0 z-10"
               style={{
                 backgroundColor: 'var(--bg-surface)',
                 borderColor: 'var(--border-subtle)',
                 backdropFilter: 'blur(8px)',
               }}
             >
-              <h3 id="synopsis-title" className="font-display italic text-base" style={{ color: 'var(--text-primary)' }}>
-                Sinopse Completa
+              <h3 id="synopsis-title" className="font-display italic text-lg" style={{ color: 'var(--text-primary)' }}>
+                Sinopse Completa — {book.title}
               </h3>
               <button
                 type="button"
@@ -327,9 +382,9 @@ export function BookCard({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
-              <div className="space-y-4">
-                <div className="p-3 rounded-xl" style={{ backgroundColor: 'var(--accent-soft)', border: '1px solid var(--accent-primary)' }}>
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-5 sm:p-6">
+              <div className="space-y-4 max-w-2xl">
+                <div className="p-3.5 rounded-xl" style={{ backgroundColor: 'var(--accent-soft)', border: '1px solid var(--accent-primary)' }}>
                   <div className="flex items-center gap-2 text-sm font-medium mb-2" style={{ color: 'var(--accent-primary)' }}>
                     <Sparkles className="w-4 h-4 flex-shrink-0" />
                     <span>Por que combina com você</span>
@@ -342,7 +397,7 @@ export function BookCard({
                   <h4 className="font-medium text-sm mb-2" style={{ color: 'var(--text-primary)' }}>
                     Sinopse
                   </h4>
-                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                  <p className="text-sm sm:text-base leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                     {book.synopsis}
                   </p>
                 </div>

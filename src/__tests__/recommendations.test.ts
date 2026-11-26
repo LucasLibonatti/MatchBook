@@ -74,6 +74,19 @@ describe('normalizeRecommendations', () => {
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe('Neuromancer');
   });
+
+  it('enforces at most 1 book per author across the batch', () => {
+    const raw = [
+      { title: 'Dom Casmurro', author: 'Machado de Assis', matchPercentage: 98 },
+      { title: 'Memórias Póstumas de Brás Cubas', author: 'Machado de Assis', matchPercentage: 96 },
+      { title: 'Quincas Borba', author: 'Machado de Assis', matchPercentage: 94 },
+      { title: 'O Cortiço', author: 'Aluísio Azevedo', matchPercentage: 92 },
+    ];
+
+    const result = normalizeRecommendations(raw, SAMPLE_SEEDS, []);
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.author)).toEqual(['Machado de Assis', 'Aluísio Azevedo']);
+  });
 });
 
 describe('generateFallbackRecommendations', () => {

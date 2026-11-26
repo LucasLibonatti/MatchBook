@@ -5,6 +5,7 @@ export const booksRoutes = new Hono();
 const GOOGLE_BOOKS_BASE = 'https://www.googleapis.com/books/v1/volumes';
 const OPEN_LIBRARY_BASE = 'https://openlibrary.org/search.json';
 const OPEN_LIBRARY_COVERS = 'https://covers.openlibrary.org/b/id';
+const OPEN_LIBRARY_ISBN = 'https://covers.openlibrary.org/b/isbn';
 
 function getGoogleBooksKey(): string {
   return (process.env.GOOGLE_BOOKS_API_KEY || process.env.VITE_GOOGLE_BOOKS_API_KEY || '')
@@ -19,6 +20,40 @@ function upgradeGoogleBookCover(rawUrl: string): string {
     url += `${separator}fife=w800-h1200`;
   }
   return url;
+}
+
+/**
+ * Validates that a cover URL actually returns a real image (> 4KB),
+ * filtering out Google Books' 1269-byte "image not available" PNG and 1x1 GIFs.
+ */
+async function isValidCoverUrl(url: string, parentSignal?: AbortSignal): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  const onParentAbort = () => controller.abort();
+  parentSignal?.addEventListener('abort', onParentAbort);
+
+  try {
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    if (!res.ok) return false;
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) return false;
+
+    const lengthHeader = res.headers.get('content-length');
+    if (lengthHeader !== null) {
+      const size = Number(lengthHeader);
+      if (Number.isFinite(size) && size < 4000) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener('abort', onParentAbort);
+  }
 }
 
 async function fetchGoogleVolumes(queryParams: string, signal?: AbortSignal): Promise<{ items?: unknown[] }> {
@@ -40,6 +75,66 @@ async function fetchGoogleVolumes(queryParams: string, signal?: AbortSignal): Pr
   }
 
   throw new Error(`Google Books HTTP ${response.status}`);
+}
+
+async function findGoogleCover(query: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      maxResults: '5',
+      printType: 'books',
+    });
+    const data = await fetchGoogleVolumes(params.toString(), signal);
+    const items = Array.isArray(data.items) ? data.items : [];
+
+    for (const raw of items) {
+      const item = raw as { volumeInfo?: { imageLinks?: { thumbnail?: string; smallThumbnail?: string } } };
+      const thumb = item.volumeInfo?.imageLinks?.thumbnail || item.volumeInfo?.imageLinks?.smallThumbnail;
+      if (!thumb) continue;
+
+      const candidate = upgradeGoogleBookCover(thumb);
+      if (await isValidCoverUrl(candidate, signal)) {
+        return candidate;
+      }
+    }
+  } catch {
+    // Ignore and continue waterfall
+  }
+  return null;
+}
+
+async function findOpenLibraryCover(
+  titleQuery: string,
+  authorQuery: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  try {
+    const olParams = new URLSearchParams({
+      title: titleQuery,
+      limit: '5',
+      fields: 'cover_i',
+    });
+    if (authorQuery) {
+      olParams.set('author', authorQuery);
+    }
+
+    const res = await fetch(`${OPEN_LIBRARY_BASE}?${olParams}`, { signal });
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as { docs?: Array<{ cover_i?: number }> };
+    const docs = Array.isArray(data.docs) ? data.docs : [];
+
+    for (const doc of docs) {
+      if (!doc.cover_i) continue;
+      const candidate = `${OPEN_LIBRARY_COVERS}/${doc.cover_i}-L.jpg?default=false`;
+      if (await isValidCoverUrl(candidate, signal)) {
+        return candidate;
+      }
+    }
+  } catch {
+    // Ignore and continue waterfall
+  }
+  return null;
 }
 
 booksRoutes.get('/search', async (c) => {
@@ -137,7 +232,7 @@ booksRoutes.get('/search', async (c) => {
           author: doc.author_name?.join(', ') || 'Autor desconhecido',
           publishedYear: doc.first_publish_year,
           categories: doc.subject?.slice(0, 3) || [],
-          coverUrl: doc.cover_i ? `${OPEN_LIBRARY_COVERS}/${doc.cover_i}-L.jpg` : undefined,
+          coverUrl: doc.cover_i ? `${OPEN_LIBRARY_COVERS}/${doc.cover_i}-L.jpg?default=false` : undefined,
           isbn: doc.isbn?.[0],
           source: 'openlibrary',
         });
@@ -152,6 +247,7 @@ booksRoutes.get('/search', async (c) => {
 
 booksRoutes.get('/cover', async (c) => {
   const title = (c.req.query('title') || '').trim();
+  const originalTitle = (c.req.query('originalTitle') || '').trim();
   const author = (c.req.query('author') || '').trim();
   const isbn = (c.req.query('isbn') || '').trim();
 
@@ -160,38 +256,35 @@ booksRoutes.get('/cover', async (c) => {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4500);
+  const timeout = setTimeout(() => controller.abort(), 7500);
 
   try {
-    const query = isbn ? `isbn:${isbn}` : `${title} ${author}`.trim();
-    const params = new URLSearchParams({
-      q: query,
-      maxResults: '1',
-      printType: 'books',
-    });
+    // 1. Google Books with localized title + author
+    const googlePrimary = await findGoogleCover(`${title} ${author}`.trim(), controller.signal);
+    if (googlePrimary) return c.json({ coverUrl: googlePrimary });
 
-    try {
-      const data = await fetchGoogleVolumes(params.toString(), controller.signal);
-      const first = (data.items?.[0] as { volumeInfo?: { imageLinks?: { thumbnail?: string } } }) || null;
-      if (first?.volumeInfo?.imageLinks?.thumbnail) {
-        return c.json({ coverUrl: upgradeGoogleBookCover(first.volumeInfo.imageLinks.thumbnail) });
-      }
-    } catch {
-      // Fallback to Open Library
+    // 2. Open Library with localized title + author
+    const olPrimary = await findOpenLibraryCover(title, author, controller.signal);
+    if (olPrimary) return c.json({ coverUrl: olPrimary });
+
+    // 3. If originalTitle differs, search both providers in original language (e.g. English/Spanish)
+    if (originalTitle && originalTitle.toLowerCase() !== title.toLowerCase()) {
+      const googleOriginal = await findGoogleCover(`${originalTitle} ${author}`.trim(), controller.signal);
+      if (googleOriginal) return c.json({ coverUrl: googleOriginal });
+
+      const olOriginal = await findOpenLibraryCover(originalTitle, author, controller.signal);
+      if (olOriginal) return c.json({ coverUrl: olOriginal });
     }
 
-    try {
-      const olParams = new URLSearchParams({ title, author, limit: '1', fields: 'cover_i' });
-      const res = await fetch(`${OPEN_LIBRARY_BASE}?${olParams}`, { signal: controller.signal });
-      if (res.ok) {
-        const data = (await res.json()) as { docs?: Array<{ cover_i?: number }> };
-        const coverId = data.docs?.[0]?.cover_i;
-        if (coverId) {
-          return c.json({ coverUrl: `${OPEN_LIBRARY_COVERS}/${coverId}-L.jpg` });
+    // 4. Open Library direct ISBN cover check
+    if (isbn) {
+      const cleanIsbn = isbn.replace(/[^0-9Xx]/g, '');
+      if (cleanIsbn) {
+        const isbnCover = `${OPEN_LIBRARY_ISBN}/${cleanIsbn}-L.jpg?default=false`;
+        if (await isValidCoverUrl(isbnCover, controller.signal)) {
+          return c.json({ coverUrl: isbnCover });
         }
       }
-    } catch {
-      // Ignore
     }
 
     return c.json({ coverUrl: null });

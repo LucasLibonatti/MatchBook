@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, Sparkles, BookOpen, Heart, X, Undo2, RefreshCw } from 'lucide-react';
-import type { BookRecommendation, SeedBook } from '../types/book';
-import { BookCard } from './BookCard';
+import type { BookRecommendation, SeedBook, CurationFocus } from '../types/book';
+import { BookCard, type SwipeTransition } from './BookCard';
 import { ToastContainer } from './Toast';
 import { hydrateRecommendationCovers } from '../services/bookCoverService';
 import { getRecommendations } from '../services/groqService';
@@ -15,47 +15,41 @@ interface SwipeArenaProps {
   isModalOpen?: boolean;
 }
 
+const SWIPE_THROTTLE_MS = 160;
+
+const FOCUS_OPTIONS: Array<{ value: CurationFocus; label: string }> = [
+  { value: 'balanced', label: 'Equilibrado' },
+  { value: 'quick', label: 'Curtos' },
+  { value: 'classics', label: 'Clássicos' },
+  { value: 'modern', label: 'Modernos' },
+  { value: 'hidden-gems', label: 'Joias Ocultas' },
+];
+
 export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false }: SwipeArenaProps) {
   const { likeBook, passBook, undoSwipe, excludedTitles } = useMatchBook();
 
   const [books, setBooks] = useState<BookRecommendation[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [focus, setFocus] = useState<CurationFocus>('balanced');
   const [isLoading, setIsLoading] = useState(true);
   const [loadingStage, setLoadingStage] = useState('Lendo a essência dos seus 3 livros...');
   const [error, setError] = useState<string | null>(null);
   const [batchSource, setBatchSource] = useState<'groq' | 'fallback'>('groq');
+  const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
   const [lastAction, setLastAction] = useState<UndoableSwipe | null>(null);
   const [isSynopsisExpanded, setIsSynopsisExpanded] = useState(false);
   const [toasts, setToasts] = useState<Array<{ id: string; book: BookRecommendation }>>([]);
-  const [isAnimating, setIsAnimating] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [transitionState, setTransitionState] = useState<SwipeTransition>({
+    direction: 'right',
+    mode: 'swipe',
+  });
 
+  const lastSwipeAtRef = useRef(0);
   const excludedTitlesRef = useRef(excludedTitles);
   useEffect(() => {
     excludedTitlesRef.current = excludedTitles;
   }, [excludedTitles]);
-
-  const x = useMotionValue<number>(0);
-  const y = useMotionValue<number>(0);
-  const cardOpacity = useMotionValue<number>(1);
-  const cardRotate = useMotionValue<number>(0);
-
-  const likeOpacity = useTransform<number, number>(x, [20, 120], [0, 1]);
-  const passOpacity = useTransform<number, number>(x, [-20, -120], [0, 1]);
-  const likeScale = useTransform<number, number>(x, [20, 120], [0.8, 1]);
-  const passScale = useTransform<number, number>(x, [-20, -120], [0.8, 1]);
-
-  const nextCardScale = useTransform<number, number>(x, [-150, 0, 150], [1, 0.94, 1]);
-  const nextCardY = useTransform<number, number>(x, [-150, 0, 150], [0, 14, 0]);
-  const nextCardOpacity = useTransform<number, number>(x, [-150, 0, 150], [1, 0.65, 1]);
-
-  const thirdCardScale = useTransform<number, number>(x, [-150, 0, 150], [0.9, 0.88, 0.9]);
-  const thirdCardY = useTransform<number, number>(x, [-150, 0, 150], [24, 28, 24]);
-  const thirdCardOpacity = useTransform<number, number>(x, [-150, 0, 150], [0.5, 0.35, 0.5]);
-
-  const thirdCardScaleStable = useTransform<number, number>(x, () => 0.82);
-  const thirdCardYStable = useTransform<number, number>(x, () => 40);
-  const thirdCardOpacityStable = useTransform<number, number>(x, () => 0.2);
 
   const visibleBooks = books.slice(currentIndex, currentIndex + 3);
   const activeBook = books[currentIndex] ?? null;
@@ -67,22 +61,20 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
     async function fetchBatch() {
       setIsLoading(true);
       setError(null);
+      setErrorCode(undefined);
       setIsSynopsisExpanded(false);
       setLastAction(null);
-      x.set(0);
-      y.set(0);
-      cardRotate.set(0);
-      cardOpacity.set(1);
 
       try {
         setLoadingStage('Consultando curadoria de IA...');
         const seedTitles = seedBooks.map((b) => b.title);
         const allExcluded = [...excludedTitlesRef.current, ...seedTitles];
 
-        const batch = await getRecommendations(seedBooks, allExcluded);
+        const batch = await getRecommendations(seedBooks, allExcluded, focus);
         if (cancelled) return;
 
         setBatchSource(batch.source);
+        setErrorCode(batch.errorCode);
         setLoadingStage('Preparando capas em alta definição...');
 
         const initialHydrated = await hydrateRecommendationCovers(
@@ -118,111 +110,56 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
       cancelled = true;
       controller.abort();
     };
-  }, [seedBooks, reloadNonce, x, y, cardRotate, cardOpacity]);
+  }, [seedBooks, focus, reloadNonce]);
 
   const performSwipe = useCallback(
-    (
-      direction: 'left' | 'right',
-      book: BookRecommendation,
-      options?: { velocityX?: number; fromDrag?: boolean }
-    ) => {
-      if (isAnimating) return;
+    (direction: 'left' | 'right') => {
+      const targetBook = books[currentIndex];
+      if (!targetBook) return;
 
-      const { velocityX = 0, fromDrag = false } = options || {};
+      const now = Date.now();
+      if (now - lastSwipeAtRef.current < SWIPE_THROTTLE_MS) return;
+      lastSwipeAtRef.current = now;
+
       const action: UndoableSwipe = {
         type: direction === 'right' ? 'like' : 'pass',
-        book,
+        book: targetBook,
         direction,
       };
 
       if (direction === 'right') {
-        likeBook(book);
-        const toastId = `${book.id}-${Date.now()}`;
-        setToasts((prev) => [...prev, { id: toastId, book }]);
+        likeBook(targetBook);
+        const toastId = `${targetBook.id}-${now}`;
+        setToasts((prev) => [...prev, { id: toastId, book: targetBook }]);
         setTimeout(() => {
           setToasts((prev) => prev.filter((t) => t.id !== toastId));
         }, 3800);
       } else {
-        passBook(book);
+        passBook(targetBook);
       }
 
       setIsSynopsisExpanded(false);
-      setIsAnimating(true);
-
-      const throwDistance = (typeof window !== 'undefined' ? window.innerWidth : 1400) + 400;
-      const targetX = direction === 'right' ? throwDistance : -throwDistance;
-      const targetY = y.get() + (direction === 'right' ? 30 : -30);
-      const targetRotate = direction === 'right' ? 25 : -25;
-
-      const animConfig =
-        fromDrag && Math.abs(velocityX) > 800
-          ? { type: 'spring' as const, stiffness: 350, damping: 18, mass: 0.6 }
-          : { type: 'spring' as const, stiffness: 280, damping: 22, mass: 0.8 };
-
-      animate(x, targetX, animConfig);
-      animate(y, targetY, animConfig);
-      animate(cardRotate, targetRotate, animConfig);
-      animate(cardOpacity, 0, { duration: 0.18, ease: 'easeOut' }).then(() => {
-        setCurrentIndex((prev) => prev + 1);
-        setLastAction(action);
-        x.set(0);
-        y.set(0);
-        cardRotate.set(0);
-        cardOpacity.set(1);
-        setIsAnimating(false);
-      });
+      setLastAction(action);
+      setTransitionState({ direction, mode: 'swipe' });
+      setCurrentIndex((prev) => prev + 1);
     },
-    [isAnimating, likeBook, passBook, x, y, cardRotate, cardOpacity]
-  );
-
-  const triggerSwipe = useCallback(
-    (direction: 'left' | 'right') => {
-      if (!activeBook || isAnimating) return;
-      performSwipe(direction, activeBook, { fromDrag: false });
-    },
-    [activeBook, isAnimating, performSwipe]
+    [books, currentIndex, likeBook, passBook]
   );
 
   const handleUndo = useCallback(() => {
-    if (!lastAction || isAnimating || currentIndex === 0) return;
+    if (!lastAction || currentIndex === 0) return;
 
     undoSwipe(lastAction);
     setIsSynopsisExpanded(false);
+    setTransitionState({ direction: lastAction.direction, mode: 'undo' });
     setCurrentIndex((prev) => Math.max(0, prev - 1));
-
-    const returnFromX = lastAction.direction === 'right' ? 420 : -420;
-    const returnFromRotate = lastAction.direction === 'right' ? 16 : -16;
-    x.set(returnFromX);
-    cardRotate.set(returnFromRotate);
-    y.set(24);
-    animate(x, 0, { type: 'spring', stiffness: 420, damping: 28 });
-    animate(cardRotate, 0, { type: 'spring', stiffness: 420, damping: 28 });
-    animate(y, 0, { type: 'spring', stiffness: 420, damping: 28 });
-
     setLastAction(null);
-  }, [lastAction, isAnimating, currentIndex, undoSwipe, x, y, cardRotate]);
-
-  const handleDragEnd = useCallback(
-    (offsetX: number, _offsetY: number, velocityX: number) => {
-      if (!activeBook) return;
-      const shouldSwipe = Math.abs(offsetX) > 100 || Math.abs(velocityX) > 400;
-
-      if (shouldSwipe) {
-        const direction = offsetX > 0 ? 'right' : 'left';
-        performSwipe(direction, activeBook, { velocityX, fromDrag: true });
-      } else {
-        animate(x, 0, { type: 'spring', stiffness: 500, damping: 30 });
-        animate(y, 0, { type: 'spring', stiffness: 500, damping: 30 });
-        animate(cardRotate, 0, { type: 'spring', stiffness: 500, damping: 30 });
-      }
-    },
-    [activeBook, performSwipe, x, y, cardRotate]
-  );
+  }, [lastAction, currentIndex, undoSwipe]);
 
   const toggleSynopsis = useCallback(() => {
-    if (!activeBook || isAnimating) return;
+    if (!books[currentIndex]) return;
     setIsSynopsisExpanded((prev) => !prev);
-  }, [activeBook, isAnimating]);
+  }, [books, currentIndex]);
 
   // Global keyboard shortcuts for the swipe arena
   useEffect(() => {
@@ -236,13 +173,13 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
         case 'ArrowRight':
           if (!isSynopsisExpanded) {
             e.preventDefault();
-            triggerSwipe('right');
+            performSwipe('right');
           }
           break;
         case 'ArrowLeft':
           if (!isSynopsisExpanded) {
             e.preventDefault();
-            triggerSwipe('left');
+            performSwipe('left');
           }
           break;
         case 'z':
@@ -268,7 +205,7 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [isLoading, isModalOpen, isSynopsisExpanded, triggerSwipe, handleUndo, toggleSynopsis]);
+  }, [isLoading, isModalOpen, isSynopsisExpanded, performSwipe, handleUndo, toggleSynopsis]);
 
   const handleGenerateMore = useCallback(() => {
     setReloadNonce((n) => n + 1);
@@ -276,7 +213,7 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4" role="status" aria-live="polite">
+      <div className="flex flex-col items-center justify-center h-[calc(100dvh-4rem)] px-4" role="status" aria-live="polite">
         <motion.div
           className="w-16 h-16 border-4 border-current border-t-transparent rounded-full animate-spin"
           style={{ color: 'var(--accent-primary)' }}
@@ -295,7 +232,7 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4 text-center">
+      <div className="flex flex-col items-center justify-center h-[calc(100dvh-4rem)] px-4 text-center">
         <div className="w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: 'var(--accent-soft)' }}>
           <X className="w-8 h-8" style={{ color: 'var(--accent-primary)' }} />
         </div>
@@ -320,7 +257,7 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
   if (books.length === 0 || currentIndex >= books.length) {
     return (
       <motion.div
-        className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4 text-center"
+        className="flex flex-col items-center justify-center h-[calc(100dvh-4rem)] px-4 text-center"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
       >
@@ -355,79 +292,116 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
     );
   }
 
-  const canUndo = Boolean(lastAction && currentIndex > 0 && !isAnimating);
+  const canUndo = Boolean(lastAction && currentIndex > 0);
+  const fallbackTitle = errorCode
+    ? `Acervo curado local ativo (IA indisponível: ${errorCode})`
+    : 'Acervo curado local ativo';
 
   return (
     <div
-      className="h-[calc(100vh-4rem)] overflow-hidden flex flex-col justify-between items-center px-4 py-3 select-none"
+      className="h-[calc(100dvh-4rem)] overflow-hidden flex flex-col justify-between items-center px-4 sm:px-6 py-3 select-none"
       style={{ backgroundColor: 'var(--bg-canvas)' }}
     >
-      <div className="shrink-0 w-full max-w-[420px] flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            Baseado em:
-          </span>
-          {seedBooks.map((seed) => (
-            <span key={seed.id} className="editorial-pill text-[0.65rem] font-mono truncate max-w-[110px]">
-              {seed.title}
+      {/* Top Bar: Seed pills + Focus filters + Counter */}
+      <div className="shrink-0 w-full max-w-[420px] lg:max-w-[820px] flex flex-col gap-2 mb-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+            <span className="text-xs font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+              Baseado em:
             </span>
+            {seedBooks.map((seed) => (
+              <span
+                key={seed.id}
+                className="editorial-pill text-[0.68rem] font-mono truncate max-w-[140px] sm:max-w-[200px]"
+                title={seed.title}
+              >
+                {seed.title}
+              </span>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {batchSource === 'fallback' && (
+              <span
+                className="editorial-pill text-[0.65rem] font-mono"
+                title={fallbackTitle}
+                style={{
+                  borderColor: 'var(--accent-primary)',
+                  color: 'var(--accent-primary)',
+                  backgroundColor: 'var(--accent-soft)',
+                }}
+              >
+                Local
+              </span>
+            )}
+            <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+              {Math.min(currentIndex + 1, books.length)} / {books.length}
+            </span>
+            <button
+              type="button"
+              onClick={onBackToOnboarding}
+              className="btn-ghost flex items-center gap-1 p-1.5 focus-ring"
+              aria-label="Trocar 3 livros base"
+              title="Trocar 3 livros base"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Curation focus filter chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin pb-0.5" role="group" aria-label="Filtro de curadoria">
+          <span className="text-[0.68rem] font-mono shrink-0 mr-1" style={{ color: 'var(--text-muted)' }}>
+            Estilo:
+          </span>
+          {FOCUS_OPTIONS.map((opt) => {
+            const active = focus === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setFocus(opt.value)}
+                aria-pressed={active}
+                className="px-2.5 py-1 rounded-full text-[0.7rem] font-mono transition-colors shrink-0 cursor-pointer focus-ring"
+                style={{
+                  backgroundColor: active ? 'var(--accent-soft)' : 'var(--bg-elevated)',
+                  color: active ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  border: active ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Responsive Card Stack */}
+      <div className="relative w-full max-w-[420px] lg:max-w-[820px] flex-1 min-h-0 max-h-[560px] lg:max-h-[480px] flex items-center justify-center my-1">
+        <AnimatePresence initial={false} custom={transitionState}>
+          {visibleBooks.map((book, i) => (
+            <BookCard
+              key={book.id}
+              book={book}
+              index={i}
+              isActive={i === 0}
+              isSynopsisExpanded={i === 0 && isSynopsisExpanded}
+              onToggleSynopsis={toggleSynopsis}
+              onSwipe={performSwipe}
+              swipeTransition={transitionState}
+            />
           ))}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {batchSource === 'fallback' && (
-            <span className="editorial-pill text-[0.6rem] font-mono" title="Acervo curado local">
-              Local
-            </span>
-          )}
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            {Math.min(currentIndex + 1, books.length)} / {books.length}
-          </span>
-          <button
-            type="button"
-            onClick={onBackToOnboarding}
-            className="btn-ghost flex items-center gap-1 p-1.5 focus-ring"
-            aria-label="Trocar 3 livros base"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-        </div>
+        </AnimatePresence>
       </div>
 
-      <div className="relative w-full max-w-[420px] aspect-[3/4] flex items-center justify-center my-auto">
-        {visibleBooks.map((book, i) => (
-          <BookCard
-            key={book.id}
-            book={book}
-            index={i}
-            isActive={i === 0}
-            isSynopsisExpanded={i === 0 && isSynopsisExpanded}
-            onToggleSynopsis={toggleSynopsis}
-            x={x}
-            y={y}
-            rotate={cardRotate}
-            cardOpacity={cardOpacity}
-            likeOpacity={likeOpacity}
-            passOpacity={passOpacity}
-            likeScale={likeScale}
-            passScale={passScale}
-            nextCardScale={nextCardScale}
-            nextCardY={nextCardY}
-            nextCardOpacity={nextCardOpacity}
-            thirdCardScale={i === 1 ? thirdCardScale : thirdCardScaleStable}
-            thirdCardY={i === 1 ? thirdCardY : thirdCardYStable}
-            thirdCardOpacity={i === 1 ? thirdCardOpacity : thirdCardOpacityStable}
-            dragEnd={handleDragEnd}
-          />
-        ))}
-      </div>
-
-      <div className="shrink-0 flex flex-col items-center gap-2 pt-2 w-full max-w-[420px]">
+      {/* Bottom Controls */}
+      <div className="shrink-0 flex flex-col items-center gap-2 pt-2 w-full max-w-[420px] lg:max-w-[820px]">
         <div className="flex items-center justify-center gap-3">
           <motion.button
             type="button"
-            onClick={() => triggerSwipe('left')}
-            disabled={!activeBook || isAnimating}
-            className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 border focus-ring disabled:opacity-40"
+            onClick={() => performSwipe('left')}
+            disabled={!activeBook}
+            className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 border focus-ring disabled:opacity-40 cursor-pointer"
             style={{
               borderColor: 'var(--border-subtle)',
               backgroundColor: 'var(--bg-surface)',
@@ -444,7 +418,7 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
             type="button"
             onClick={handleUndo}
             disabled={!canUndo}
-            className="px-5 h-11 rounded-full flex items-center justify-center gap-2 transition-all duration-200 border font-mono text-xs focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-5 h-11 rounded-full flex items-center justify-center gap-2 transition-all duration-200 border font-mono text-xs focus-ring disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             style={{
               borderColor: 'var(--border-subtle)',
               backgroundColor: 'var(--bg-surface)',
@@ -460,9 +434,9 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
 
           <motion.button
             type="button"
-            onClick={() => triggerSwipe('right')}
-            disabled={!activeBook || isAnimating}
-            className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 shadow-lg focus-ring disabled:opacity-40"
+            onClick={() => performSwipe('right')}
+            disabled={!activeBook}
+            className="w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 shadow-lg focus-ring disabled:opacity-40 cursor-pointer"
             style={{
               backgroundColor: 'var(--accent-primary)',
               color: 'white',
@@ -480,8 +454,8 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
           <button
             type="button"
             onClick={toggleSynopsis}
-            disabled={!activeBook || isAnimating}
-            className="btn-secondary flex items-center gap-2 px-4 focus-ring disabled:opacity-40"
+            disabled={!activeBook}
+            className="btn-secondary flex items-center gap-2 px-4 focus-ring disabled:opacity-40 cursor-pointer"
             aria-label="Detalhes (Espaço)"
           >
             <BookOpen className="w-4 h-4" />

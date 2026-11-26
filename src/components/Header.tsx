@@ -5,12 +5,14 @@ import { useMatchBook } from '../hooks/useMatchBook';
 interface HeaderProps {
   showSwapBooks?: boolean;
   onSwapBooks?: () => void;
+  onGoHome?: () => void;
   onOpenLibrary?: () => void;
 }
 
 export function Header({
   showSwapBooks = false,
   onSwapBooks,
+  onGoHome,
   onOpenLibrary,
 }: HeaderProps) {
   const { theme, toggleTheme, matches } = useMatchBook();
@@ -29,18 +31,24 @@ export function Header({
       transition={{ type: 'spring', damping: 25, stiffness: 300 }}
     >
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2.5" aria-label="MatchBook">
+        <button
+          type="button"
+          onClick={onGoHome}
+          className="flex items-center gap-2.5 rounded-xl px-2 py-1 -ml-2 transition-opacity hover:opacity-80 focus-ring cursor-pointer"
+          aria-label="Voltar para a página inicial (mantém os livros escolhidos)"
+        >
           <Book className="w-7 h-7" style={{ color: 'var(--accent-primary)' }} />
           <span className="font-display italic text-xl sm:text-2xl" style={{ color: 'var(--text-primary)' }}>
             Match<span style={{ color: 'var(--accent-primary)' }}>Book</span>
           </span>
-        </div>
+        </button>
 
         <div className="flex items-center gap-2">
           {showSwapBooks && onSwapBooks && (
             <motion.button
+              type="button"
               onClick={onSwapBooks}
-              className="btn-secondary hidden sm:flex items-center gap-2"
+              className="btn-secondary hidden sm:flex items-center gap-2 focus-ring"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               aria-label="Trocar 3 livros base"
@@ -51,6 +59,7 @@ export function Header({
           )}
 
           <motion.button
+            type="button"
             onClick={toggleTheme}
             className="btn-ghost p-2 rounded-xl focus-ring"
             whileHover={{ scale: 1.05 }}
@@ -66,6 +75,7 @@ export function Header({
 
           {onOpenLibrary && (
             <motion.button
+              type="button"
               onClick={onOpenLibrary}
               className="btn-secondary flex items-center gap-2 relative focus-ring"
               whileHover={{ scale: 1.02 }}

@@ -40,6 +40,7 @@ function MatchBookApp() {
       <Header
         showSwapBooks={view === 'arena'}
         onSwapBooks={handleSwapBooks}
+        onGoHome={handleSwapBooks}
         onOpenLibrary={handleOpenLibrary}
       />
 

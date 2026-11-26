@@ -5,7 +5,7 @@ const STORAGE_KEYS = {
   SEEDS: 'matchbook_seeds_v2',
   MATCHES: 'matchbook_matches_v2',
   SWIPES: 'matchbook_swipes_v2',
-  COVERS_CACHE: 'matchbook_covers_cache_v3',
+  COVERS_CACHE: 'matchbook_covers_cache_v4',
   EXCLUDED_TITLES: 'matchbook_excluded_titles_v2',
 } as const;
 

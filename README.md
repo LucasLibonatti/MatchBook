@@ -2,17 +2,21 @@
 
 > Descubra seu próximo livro favorito com curadoria de Inteligência Artificial e mecânica de *swipe*.
 
+[![Produção](https://img.shields.io/badge/Live-matchbook--br.vercel.app-EA580C)](https://matchbook-br.vercel.app/)
 [![CI](https://github.com/LucasLibonatti/MatchBook/actions/workflows/ci.yml/badge.svg)](https://github.com/LucasLibonatti/MatchBook/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
 
+**Acesse em produção:** [https://matchbook-br.vercel.app/](https://matchbook-br.vercel.app/)
+
 ## Sobre o Projeto
 
-O **MatchBook** é uma aplicação web de descoberta literária inspirada em mecânicas de *swipe*. A partir de **3 livros-base** escolhidos pelo leitor, o motor híbrido analisa o perfil temático e estilístico da seleção e recomenda **10 obras reais** com percentual de afinidade, justificativa personalizada (*"Por que combina com você"*) e capas em alta definição.
+O **MatchBook** é uma aplicação web de descoberta literária inspirada em mecânicas de *swipe*. A partir de **3 livros-base** escolhidos pelo leitor, o motor híbrido analisa o perfil temático e estilístico da seleção e recomenda **10 obras reais** (com diversidade garantida entre os 3 livros e máximo de 1 obra por autor), percentual de afinidade, sinopses editoriais detalhadas e capas validadas em alta definição.
 
 ### Principais Funcionalidades
-- **Onboarding inteligente:** busca combinada no acervo curado local + **Google Books API** + **Open Library API** com deduplicação e opção *Surpreenda-me*.
-- **Arena de Swipe 60fps:** gestos fluidos com **Framer Motion**, botões dedicados, **Desfazer (Undo)** real e atalhos globais de teclado (`←`, `→`, `Z`/`Backspace`, `Espaço`, `Esc`).
-- **Curadoria IA no Servidor:** backend serverless em **Hono** (Vercel Functions) consultando a **Groq API** (`llama-3.3-70b-versatile`) com regras estritas de coerência temática e fallback local automático.
+- **Onboarding inteligente:** busca combinada no acervo curado local + **Google Books API** + **Open Library API** com deduplicação e opção *Surpreenda-me*. Logo no cabeçalho volta ao início mantendo os livros escolhidos.
+- **Arena de Swipe 60fps & Layout Responsivo:** gestos fluidos com **Framer Motion**, layout editorial em 2 colunas no desktop e pilha compacta no mobile, botões dedicados, **Desfazer (Undo)** real e atalhos globais de teclado (`←`, `→`, `Z`/`Backspace`, `Espaço`, `Esc`).
+- **Curadoria IA no Servidor + Filtros de Estilo:** backend serverless em **Hono** (Vercel Functions) consultando a **Groq API** (`llama-3.3-70b-versatile`) com filtros de estilo (*Equilibrado*, *Curtos*, *Clássicos*, *Modernos*, *Joias Ocultas*) e fallback local automático.
+- **Capas Validadas Multi-Fonte:** verificação automática de imagem no servidor (filtrando placeholders *"image not available"*), com fallback em cascata para Open Library e capas editoriais SVG/CSS geradas proceduralmente.
 - **Biblioteca Pessoal:** salve seus matches, filtre por título/autor/gênero, ordene por afinidade ou data e abra links diretos na Amazon ou Google Books.
 - **Design Editorial & Acessibilidade:** modo claro/escuro sincronizado, `ErrorBoundary` global, *focus trap* nos modais e capas editoriais geradas proceduralmente quando a obra não possui imagem.
 

@@ -1,6 +1,9 @@
+export type CurationFocus = 'balanced' | 'quick' | 'classics' | 'modern' | 'hidden-gems';
+
 export interface SeedBook {
   id: string;
   title: string;
+  originalTitle?: string;
   author: string;
   publishedYear?: string | number;
   categories: string[];

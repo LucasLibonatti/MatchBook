@@ -63,6 +63,9 @@ async function fetchCoverFromApi(
     title: book.title,
     author: book.author,
   });
+  if (book.originalTitle && book.originalTitle !== book.title) {
+    params.set('originalTitle', book.originalTitle);
+  }
   if (book.isbn) {
     params.set('isbn', book.isbn);
   }
