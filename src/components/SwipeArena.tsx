@@ -66,7 +66,7 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
       setLastAction(null);
 
       try {
-        setLoadingStage('Consultando curadoria de IA...');
+        setLoadingStage('Curando seus 10 livros com IA...');
         const seedTitles = seedBooks.map((b) => b.title);
         const allExcluded = [...excludedTitlesRef.current, ...seedTitles];
 
@@ -75,7 +75,8 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
 
         setBatchSource(batch.source);
         setErrorCode(batch.errorCode);
-        setLoadingStage('Preparando capas em alta definição...');
+        setLoadingStage('Buscando capas em alta definição...');
+        setBooks(batch.recommendations);
 
         const initialHydrated = await hydrateRecommendationCovers(
           batch.recommendations,
@@ -92,7 +93,11 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
         );
 
         if (cancelled) return;
-        setBooks(initialHydrated);
+        setBooks((prev) =>
+          prev.length === initialHydrated.length
+            ? prev.map((b, i) => (b.coverUrl ? b : initialHydrated[i]))
+            : initialHydrated
+        );
         setCurrentIndex(0);
       } catch (err) {
         if (!cancelled) {

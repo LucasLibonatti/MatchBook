@@ -55,57 +55,38 @@ export async function searchBooksForOnboarding(
   }
 }
 
-async function fetchCoverFromApi(
-  book: BookRecommendation,
+async function fetchCoversBatch(
+  books: BookRecommendation[],
   signal?: AbortSignal
-): Promise<string | null> {
-  const params = new URLSearchParams({
-    title: book.title,
-    author: book.author,
-  });
-  if (book.originalTitle && book.originalTitle !== book.title) {
-    params.set('originalTitle', book.originalTitle);
-  }
-  if (book.isbn) {
-    params.set('isbn', book.isbn);
-  }
+): Promise<Record<string, string | null>> {
+  if (books.length === 0) return {};
 
   try {
-    const response = await fetch(`/api/books/cover?${params}`, { signal });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { coverUrl?: string | null };
-    return data.coverUrl || null;
+    const response = await fetch('/api/books/covers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        books: books.map((b) => ({
+          id: b.id,
+          title: b.title,
+          originalTitle: b.originalTitle,
+          author: b.author,
+          isbn: b.isbn,
+        })),
+      }),
+      signal,
+    });
+    if (!response.ok) return {};
+    const data = (await response.json()) as { covers?: Record<string, string | null> };
+    return data.covers || {};
   } catch {
-    return null;
+    return {};
   }
-}
-
-export async function hydrateSingleCover(
-  book: BookRecommendation,
-  signal?: AbortSignal
-): Promise<BookRecommendation> {
-  const cacheKey = getCoverCacheKey(book.title, book.author);
-  let coverUrl = getCachedCover(cacheKey);
-
-  if (!coverUrl && book.coverUrl) {
-    coverUrl = upgradeGoogleBookCover(book.coverUrl);
-  }
-
-  if (!coverUrl) {
-    coverUrl = await fetchCoverFromApi(book, signal);
-  }
-
-  if (coverUrl) {
-    setCachedCover(cacheKey, coverUrl);
-    preloadCover(coverUrl);
-  }
-
-  return { ...book, coverUrl: coverUrl ?? undefined };
 }
 
 /**
- * Hydrates the first 3 cards synchronously for instant stack display,
- * then continues hydrating cards 4-10 in the background via onProgress.
+ * Resolves cached/curated covers synchronously, then fetches missing covers in parallel
+ * via two batch requests (priority 0..2 capped at 1100ms wait, background 3..9 non-blocking).
  */
 export async function hydrateRecommendationCovers(
   recommendations: BookRecommendation[],
@@ -113,25 +94,64 @@ export async function hydrateRecommendationCovers(
   signal?: AbortSignal
 ): Promise<BookRecommendation[]> {
   const results = [...recommendations];
-  const immediateCount = Math.min(3, results.length);
+  const priorityMissing: Array<{ index: number; book: BookRecommendation }> = [];
+  const backgroundMissing: Array<{ index: number; book: BookRecommendation }> = [];
 
-  for (let i = 0; i < immediateCount; i++) {
-    if (signal?.aborted) break;
-    results[i] = await hydrateSingleCover(results[i], signal);
-    onProgress?.(i, results[i]);
+  for (let i = 0; i < results.length; i++) {
+    const book = results[i];
+    const cacheKey = getCoverCacheKey(book.title, book.author);
+    let coverUrl = getCachedCover(cacheKey);
+
+    if (!coverUrl && book.coverUrl) {
+      coverUrl = upgradeGoogleBookCover(book.coverUrl);
+      setCachedCover(cacheKey, coverUrl);
+    }
+
+    if (coverUrl) {
+      preloadCover(coverUrl);
+      results[i] = { ...book, coverUrl };
+      onProgress?.(i, results[i]);
+    } else if (i < 3) {
+      priorityMissing.push({ index: i, book });
+    } else {
+      backgroundMissing.push({ index: i, book });
+    }
   }
 
-  // Hydrate remaining cards (4-10) in background without blocking initial render
-  if (results.length > immediateCount && !signal?.aborted) {
-    void (async () => {
-      for (let i = immediateCount; i < results.length; i++) {
-        if (signal?.aborted) break;
-        const hydrated = await hydrateSingleCover(results[i], signal);
-        if (!signal?.aborted) {
-          onProgress?.(i, hydrated);
-        }
-      }
-    })();
+  const applyBatch = async (batch: Array<{ index: number; book: BookRecommendation }>) => {
+    if (batch.length === 0 || signal?.aborted) return;
+    const coversMap = await fetchCoversBatch(
+      batch.map((entry) => entry.book),
+      signal
+    );
+    if (signal?.aborted) return;
+
+    for (const { index, book } of batch) {
+      const url = coversMap[book.id];
+      if (!url) continue;
+      setCachedCover(getCoverCacheKey(book.title, book.author), url);
+      preloadCover(url);
+      results[index] = { ...book, coverUrl: url };
+      onProgress?.(index, results[index]);
+    }
+  };
+
+  // Start background batch (cards 4..10) immediately in parallel
+  if (backgroundMissing.length > 0 && !signal?.aborted) {
+    void applyBatch(backgroundMissing);
+  }
+
+  // Wait at most 1100ms for the first 3 cards so the UI never hangs on a slow network
+  if (priorityMissing.length > 0 && !signal?.aborted) {
+    const priorityPromise = applyBatch(priorityMissing);
+    const maxWaitPromise = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1100);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    await Promise.race([priorityPromise, maxWaitPromise]);
   }
 
   return results;

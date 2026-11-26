@@ -5,10 +5,11 @@ export const recommendationsRoutes = new Hono();
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
 
+// Fast flagship-first fallback list; avoids extra /models round-trip on happy path
 const PREFERRED_MODELS = [
+  'openai/gpt-oss-20b',
   'openai/gpt-oss-120b',
   'qwen/qwen3.8-27b',
-  'openai/gpt-oss-20b',
 ] as const;
 
 const NON_CHAT_MODEL_RE = /(whisper|orpheus|guard|safeguard|tts|embed|moderation)/i;
@@ -55,11 +56,11 @@ export interface NormalizedRecommendation {
 }
 
 const FOCUS_DIRECTIVES: Record<CurationFocus, string> = {
-  balanced: 'Equilíbrio geral: varie épocas, estilos e tamanhos mantendo conexão genuína com os 3 livros-base.',
-  quick: 'FOCO DE CURADORIA (LEITURAS CURTAS): Priorize obras ágeis e concisas (preferencialmente até ~260 páginas), sem perder profundidade.',
-  classics: 'FOCO DE CURADORIA (CLÁSSICOS): Priorize grandes clássicos atemporais da literatura brasileira e mundial (publicados antes de 1985).',
-  modern: 'FOCO DE CURADORIA (CONTEMPORÂNEOS): Priorize obras modernas e contemporâneas publicadas a partir do ano 2000.',
-  'hidden-gems': 'FOCO DE CURADORIA (JOIAS OCULTAS): Evite os bestsellers mais clichês e óbvios; recomende obras aclamadas pela crítica e menos óbvias.',
+  balanced: 'Equilíbrio geral: varie épocas, estilos e tamanhos mantendo conexão genuína com os 3 base.',
+  quick: 'FOCO (CURTOS): Priorize obras ágeis até ~260 páginas.',
+  classics: 'FOCO (CLÁSSICOS): Priorize clássicos atemporais (antes de 1985).',
+  modern: 'FOCO (CONTEMPORÂNEOS): Priorize obras publicadas a partir de 2000.',
+  'hidden-gems': 'FOCO (JOIAS OCULTAS): Evite bestsellers óbvios; recomende obras menos óbvias e aclamadas.',
 };
 
 function getGroqKey(): string {
@@ -75,7 +76,7 @@ async function fetchAvailableChatModels(apiKey: string): Promise<string[]> {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = setTimeout(() => controller.abort(), 4000);
 
   try {
     const res = await fetch(GROQ_MODELS_URL, {
@@ -101,21 +102,6 @@ async function fetchAvailableChatModels(apiKey: string): Promise<string[]> {
   } finally {
     clearTimeout(timeout);
   }
-}
-
-async function selectCandidateModels(apiKey: string): Promise<string[]> {
-  const available = await fetchAvailableChatModels(apiKey);
-  if (available.length === 0) {
-    return PREFERRED_MODELS.slice(0, 2);
-  }
-
-  const preferredAvailable = PREFERRED_MODELS.filter((m) => available.includes(m));
-  if (preferredAvailable.length > 0) {
-    return preferredAvailable.slice(0, 2);
-  }
-
-  // Fallback if Groq rotates all model names in the future
-  return available.slice(0, 2);
 }
 
 function slugify(value: string): string {
@@ -145,48 +131,32 @@ function buildSystemPrompt(
     .map((b, i) => {
       const cats =
         Array.isArray(b.categories) && b.categories.length > 0
-          ? ` [${b.categories.slice(0, 3).join(', ')}]`
+          ? ` [${b.categories.slice(0, 2).join(', ')}]`
           : '';
-      return `Livro #${i + 1}: "${b.title}" — ${b.author} (${b.publishedYear || '?'})${cats}`;
+      return `#${i + 1}: "${b.title}" — ${b.author} (${b.publishedYear || '?'})${cats}`;
     })
     .join('\n');
 
   const excludeList =
     excludeTitles.length > 0
-      ? `\nEXCLUIR OBRIGATORIAMENTE (não recomende nenhum destes): ${excludeTitles.slice(0, 60).join(', ')}`
+      ? `\nEXCLUIR: ${excludeTitles.slice(0, 50).join(', ')}`
       : '';
 
   const focusDirective = FOCUS_DIRECTIVES[focus] || FOCUS_DIRECTIVES.balanced;
 
-  return `Você é um curador literário sênior do MatchBook. Recomende 10 livros REAIS e publicados com alta afinidade ao conjunto completo dos livros-base abaixo.
+  return `Curador literário sênior do MatchBook. Recomende 10 livros REAIS e publicados com alta afinidade aos livros-base abaixo.
 
-LIVROS-BASE DO LEITOR:
+BASE:
 ${seedsDescription}${excludeList}
 
-DISTRIBUIÇÃO E DIVERSIDADE (CRÍTICO — SIGA À RISCA):
-1. EQUILÍBRIO ENTRE OS 3 LIVROS: NÃO foque em apenas 1 livro-base. Quando houver 3 livros-base, distribua as 10 indicações de forma equilibrada:
-   - 3 recomendações inspiradas principalmente no Livro #1
-   - 3 recomendações inspiradas principalmente no Livro #2
-   - 3 recomendações inspiradas principalmente no Livro #3
-   - 1 recomendação "ponte" que sintetize temas de 2 ou 3 livros juntos.
-2. MÁXIMO 1 LIVRO POR AUTOR: Os 10 livros recomendados DEVEM ter 10 autores completamente diferentes entre si. Evite repetir qualquer autor dos livros-base (prefira sempre novos autores).
-3. COERÊNCIA TEMÁTICA: Analise o domínio de cada livro-base (ficção literária, biografia/memórias, sci-fi/fantasia, não-ficção técnica, filosofia) e nunca faça cruzamentos aleatórios sem conexão real.
+REGRAS:
+1. EQUILÍBRIO: Se houver 3 livros-base, distribua 3 para o #1, 3 para o #2, 3 para o #3 e 1 ponte (NUNCA foque em só 1 livro).
+2. DIVERSIDADE: Máximo 1 livro por autor (10 autores diferentes) e evite autores da base.
+3. COERÊNCIA: Respeite o domínio de cada base sem cruzamentos aleatórios.
 4. ${focusDirective}
 
-FORMATO DE SAÍDA (APENAS JSON VÁLIDO: {"recommendations": [...]}):
-Cada item deve conter:
-- "title": string (título em português se existir edição conhecida, senão original)
-- "originalTitle": string (título original da obra no idioma nativo)
-- "author": string (nome completo do autor — nunca repetido na lista)
-- "publishedYear": number (ano de publicação original)
-- "pageCount": number (número aproximado de páginas)
-- "categories": string[] (2 a 3 gêneros curtos em português)
-- "matchPercentage": number (inteiro entre 84 e 99, ordenado do maior para o menor)
-- "synopsis": string (420 a 620 caracteres em português, em 2 a 3 frases envolventes apresentando premissa, conflito central e atmosfera da obra, SEM spoilers)
-- "matchReason": string (1 a 2 frases diretas em português citando explicitamente pelo menos 1 dos livros-base pelo nome e o elemento concreto que os conecta)
-- "isbn": string (ISBN-13 se souber com segurança, senão string vazia)
-
-Garanta 10 obras reais distintas, 10 autores diferentes, e zero repetição dos livros-base ou excluídos.`;
+SAÍDA (APENAS JSON: {"recommendations":[...]}):
+Campos por item: title (PT se existir), originalTitle (idioma original), author, publishedYear (number), pageCount (number), categories (2-3 gêneros curtos PT), matchPercentage (84-99 desc), synopsis (320-480 chars PT, envolvente, sem spoilers), matchReason (1-2 frases citando 1+ livro base pelo nome), isbn (ISBN-13 ou "").`;
 }
 
 function extractJson(content: string): { recommendations?: RawRecommendation[] } | null {
@@ -307,25 +277,31 @@ async function callGroqModel(
   apiKey: string
 ): Promise<RawRecommendation[]> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 24000);
+  const timeout = setTimeout(() => controller.abort(), 16000);
 
   try {
+    const body: Record<string, unknown> = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: 'Gere as 10 recomendações em JSON agora.' },
+      ],
+      temperature: 0.65,
+      max_tokens: 3400,
+      response_format: { type: 'json_object' },
+    };
+
+    if (model.startsWith('openai/gpt-oss-')) {
+      body.reasoning_effort = 'low';
+    }
+
     const response = await fetch(GROQ_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'Gere as 10 recomendações equilibradas e diversificadas em JSON agora.' },
-        ],
-        temperature: 0.65,
-        max_tokens: 4096,
-        response_format: { type: 'json_object' },
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -389,8 +365,9 @@ recommendationsRoutes.post('/', async (c) => {
   }
 
   const systemPrompt = buildSystemPrompt(seedBooks, excludeTitles, focus);
-  const candidateModels = await selectCandidateModels(apiKey);
+  const candidateModels = PREFERRED_MODELS.slice(0, 2);
   let lastErrorCode = 'GROQ_ERROR';
+  let sawModelNotFound = false;
 
   for (const model of candidateModels) {
     try {
@@ -403,14 +380,33 @@ recommendationsRoutes.post('/', async (c) => {
       if (err instanceof GroqHttpError) {
         if (err.status === 401 || err.status === 403) {
           lastErrorCode = 'GROQ_UNAUTHORIZED';
+          break;
         } else if (err.status === 404) {
           lastErrorCode = 'GROQ_MODEL_NOT_FOUND';
-          cachedChatModels = null;
+          sawModelNotFound = true;
         } else if (err.status === 429) {
           lastErrorCode = 'GROQ_RATE_LIMIT';
         }
       }
       console.warn(`[MatchBook API] Modelo ${model} falhou:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Only query /models when a preferred model returned 404 (avoids cold-start round-trip on happy path)
+  if (sawModelNotFound) {
+    cachedChatModels = null;
+    const discovered = await fetchAvailableChatModels(apiKey);
+    const fallbackDiscovered = discovered.find((m) => !(candidateModels as readonly string[]).includes(m));
+    if (fallbackDiscovered) {
+      try {
+        const raw = await callGroqModel(fallbackDiscovered, systemPrompt, apiKey);
+        const recommendations = normalizeRecommendations(raw, seedBooks, excludeTitles);
+        if (recommendations.length >= 5) {
+          return c.json({ recommendations, source: 'groq', model: fallbackDiscovered });
+        }
+      } catch (err) {
+        console.warn(`[MatchBook API] Descoberto ${fallbackDiscovered} falhou:`, err instanceof Error ? err.message : err);
+      }
     }
   }
 

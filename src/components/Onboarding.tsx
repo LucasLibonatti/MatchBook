@@ -83,7 +83,7 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
             setIsSearching(false);
           }
         }
-      }, 320);
+      }, 180);
     },
     [recentSeeds.length]
   );
