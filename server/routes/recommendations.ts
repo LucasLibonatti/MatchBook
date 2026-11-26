@@ -3,7 +3,19 @@ import { Hono } from 'hono';
 export const recommendationsRoutes = new Hono();
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const PREFERRED_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
+const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
+
+const PREFERRED_MODELS = [
+  'openai/gpt-oss-120b',
+  'qwen/qwen3.8-27b',
+  'openai/gpt-oss-20b',
+] as const;
+
+const NON_CHAT_MODEL_RE = /(whisper|orpheus|guard|safeguard|tts|embed|moderation)/i;
+const MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let cachedChatModels: string[] | null = null;
+let cachedModelsAt = 0;
 
 export type CurationFocus = 'balanced' | 'quick' | 'classics' | 'modern' | 'hidden-gems';
 
@@ -54,6 +66,56 @@ function getGroqKey(): string {
   return (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '')
     .trim()
     .replace(/^["']|["']$/g, '');
+}
+
+async function fetchAvailableChatModels(apiKey: string): Promise<string[]> {
+  const now = Date.now();
+  if (cachedChatModels && now - cachedModelsAt < MODELS_CACHE_TTL_MS) {
+    return cachedChatModels;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch(GROQ_MODELS_URL, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      data?: Array<{ id?: string; active?: boolean }>;
+    };
+    const models = (Array.isArray(data.data) ? data.data : [])
+      .filter((m) => m.id && m.active !== false && !NON_CHAT_MODEL_RE.test(m.id))
+      .map((m) => m.id as string);
+
+    if (models.length > 0) {
+      cachedChatModels = models;
+      cachedModelsAt = now;
+    }
+    return models;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function selectCandidateModels(apiKey: string): Promise<string[]> {
+  const available = await fetchAvailableChatModels(apiKey);
+  if (available.length === 0) {
+    return PREFERRED_MODELS.slice(0, 2);
+  }
+
+  const preferredAvailable = PREFERRED_MODELS.filter((m) => available.includes(m));
+  if (preferredAvailable.length > 0) {
+    return preferredAvailable.slice(0, 2);
+  }
+
+  // Fallback if Groq rotates all model names in the future
+  return available.slice(0, 2);
 }
 
 function slugify(value: string): string {
@@ -261,7 +323,7 @@ async function callGroqModel(
           { role: 'user', content: 'Gere as 10 recomendações equilibradas e diversificadas em JSON agora.' },
         ],
         temperature: 0.65,
-        max_tokens: 3600,
+        max_tokens: 4096,
         response_format: { type: 'json_object' },
       }),
       signal: controller.signal,
@@ -327,9 +389,10 @@ recommendationsRoutes.post('/', async (c) => {
   }
 
   const systemPrompt = buildSystemPrompt(seedBooks, excludeTitles, focus);
+  const candidateModels = await selectCandidateModels(apiKey);
   let lastErrorCode = 'GROQ_ERROR';
 
-  for (const model of PREFERRED_MODELS) {
+  for (const model of candidateModels) {
     try {
       const raw = await callGroqModel(model, systemPrompt, apiKey);
       const recommendations = normalizeRecommendations(raw, seedBooks, excludeTitles);
@@ -340,6 +403,9 @@ recommendationsRoutes.post('/', async (c) => {
       if (err instanceof GroqHttpError) {
         if (err.status === 401 || err.status === 403) {
           lastErrorCode = 'GROQ_UNAUTHORIZED';
+        } else if (err.status === 404) {
+          lastErrorCode = 'GROQ_MODEL_NOT_FOUND';
+          cachedChatModels = null;
         } else if (err.status === 429) {
           lastErrorCode = 'GROQ_RATE_LIMIT';
         }

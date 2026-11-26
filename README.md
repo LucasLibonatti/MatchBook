@@ -15,7 +15,7 @@ O **MatchBook** é uma aplicação web de descoberta literária inspirada em mec
 ### Principais Funcionalidades
 - **Onboarding inteligente:** busca combinada no acervo curado local + **Google Books API** + **Open Library API** com deduplicação e opção *Surpreenda-me*. Logo no cabeçalho volta ao início mantendo os livros escolhidos.
 - **Arena de Swipe 60fps & Layout Responsivo:** gestos fluidos com **Framer Motion**, layout editorial em 2 colunas no desktop e pilha compacta no mobile, botões dedicados, **Desfazer (Undo)** real e atalhos globais de teclado (`←`, `→`, `Z`/`Backspace`, `Espaço`, `Esc`).
-- **Curadoria IA no Servidor + Filtros de Estilo:** backend serverless em **Hono** (Vercel Functions) consultando a **Groq API** (`llama-3.3-70b-versatile`) com filtros de estilo (*Equilibrado*, *Curtos*, *Clássicos*, *Modernos*, *Joias Ocultas*) e fallback local automático.
+- **Curadoria IA no Servidor + Filtros de Estilo:** backend serverless em **Hono** (Vercel Functions) consultando a **Groq API** (`openai/gpt-oss-120b` com descoberta automática de modelos ativos e fallback `qwen/qwen3.8-27b`) com filtros de estilo (*Equilibrado*, *Curtos*, *Clássicos*, *Modernos*, *Joias Ocultas*) e fallback local automático.
 - **Capas Validadas Multi-Fonte:** verificação automática de imagem no servidor (filtrando placeholders *"image not available"*), com fallback em cascata para Open Library e capas editoriais SVG/CSS geradas proceduralmente.
 - **Biblioteca Pessoal:** salve seus matches, filtre por título/autor/gênero, ordene por afinidade ou data e abra links diretos na Amazon ou Google Books.
 - **Design Editorial & Acessibilidade:** modo claro/escuro sincronizado, `ErrorBoundary` global, *focus trap* nos modais e capas editoriais geradas proceduralmente quando a obra não possui imagem.
@@ -28,7 +28,7 @@ O **MatchBook** é uma aplicação web de descoberta literária inspirada em mec
 | :--- | :--- |
 | **Frontend** | React 19, TypeScript, Vite 8, Tailwind CSS v4, Framer Motion, Lucide Icons |
 | **Backend Serverless** | Hono em entrypoint único na Vercel (`api/index.ts` + `server/`) |
-| **Inteligência Artificial** | Groq API (`llama-3.3-70b-versatile` com fallback `llama-3.1-8b-instant`) executada exclusivamente no servidor |
+| **Inteligência Artificial** | Groq API (`openai/gpt-oss-120b` com auto-descoberta e fallback `qwen/qwen3.8-27b`) executada exclusivamente no servidor |
 | **Catálogo & Capas** | Google Books API + Open Library API (proxy no servidor com cache local de 30 dias) |
 | **Qualidade & CI** | Vitest, Oxlint, GitHub Actions CI, `qa-check.ps1` |
 
