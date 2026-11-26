@@ -103,4 +103,9 @@ describe('generateFallbackRecommendations', () => {
     const ids = new Set(result.map((r) => r.id));
     expect(ids.size).toBe(result.length);
   });
+
+  it('respects custom count=5 for progressive batch loading', () => {
+    const result = generateFallbackRecommendations(SAMPLE_SEEDS, [], 'balanced', 5);
+    expect(result).toHaveLength(5);
+  });
 });

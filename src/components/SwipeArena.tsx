@@ -66,11 +66,12 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
       setLastAction(null);
 
       try {
-        setLoadingStage('Curando seus 10 livros com IA...');
+        setLoadingStage('Curando primeiros 5 livros com IA...');
         const seedTitles = seedBooks.map((b) => b.title);
         const allExcluded = [...excludedTitlesRef.current, ...seedTitles];
 
-        const batch = await getRecommendations(seedBooks, allExcluded, focus);
+        // 1. Fetch first 5 books for ultra-fast initial load
+        const batch = await getRecommendations(seedBooks, allExcluded, focus, 5);
         if (cancelled) return;
 
         setBatchSource(batch.source);
@@ -99,6 +100,40 @@ export function SwipeArena({ seedBooks, onBackToOnboarding, isModalOpen = false 
             : initialHydrated
         );
         setCurrentIndex(0);
+        setIsLoading(false);
+
+        // 2. Background prefetch: fetch +5 more books silently while the user reads/swipes
+        void (async () => {
+          const firstTitles = initialHydrated.map((b) => b.title);
+          const nextExcluded = [...allExcluded, ...firstTitles];
+          const secondBatch = await getRecommendations(seedBooks, nextExcluded, focus, 5);
+          if (cancelled || controller.signal.aborted || secondBatch.recommendations.length === 0) return;
+
+          const baseOffset = initialHydrated.length;
+          setBooks((prev) => {
+            const existingKeys = new Set(prev.map((b) => b.title.toLowerCase().trim()));
+            const uniqueAdditions = secondBatch.recommendations.filter(
+              (b) => !existingKeys.has(b.title.toLowerCase().trim())
+            );
+            return [...prev, ...uniqueAdditions];
+          });
+
+          await hydrateRecommendationCovers(
+            secondBatch.recommendations,
+            (subIndex, updatedBook) => {
+              if (cancelled || controller.signal.aborted) return;
+              setBooks((prev) => {
+                const targetIdx = baseOffset + subIndex;
+                if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+                if (prev[targetIdx]?.id !== updatedBook.id) return prev;
+                const next = [...prev];
+                next[targetIdx] = updatedBook;
+                return next;
+              });
+            },
+            controller.signal
+          );
+        })();
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Erro ao carregar recomendações');

@@ -45,7 +45,8 @@ function getFocusBoost(book: SeedBook, focus: CurationFocus): number {
 export function generateFallbackRecommendations(
   seedBooks: SeedBook[],
   excludeTitles: string[],
-  focus: CurationFocus = 'balanced'
+  focus: CurationFocus = 'balanced',
+  count = 10
 ): BookRecommendation[] {
   const allExcluded = new Set([
     ...excludeTitles.map((t) => t.toLowerCase().trim()),
@@ -82,7 +83,7 @@ export function generateFallbackRecommendations(
     if (seenAuthors.has(authorKey)) continue;
     seenAuthors.add(authorKey);
     selected.push(entry.book);
-    if (selected.length >= 10) break;
+    if (selected.length >= count) break;
   }
 
   return selected.map((book, i) => {
@@ -130,9 +131,10 @@ export function generateFallbackRecommendations(
 export async function getRecommendations(
   seedBooks: SeedBook[],
   excludeTitles: string[] = [],
-  focus: CurationFocus = 'balanced'
+  focus: CurationFocus = 'balanced',
+  count = 10
 ): Promise<RecommendationBatchResult> {
-  const requestKey = `${focus}|${seedBooks.map((b) => b.id).sort().join(',')}|${[...excludeTitles].sort().join(',')}`;
+  const requestKey = `${count}|${focus}|${seedBooks.map((b) => b.id).sort().join(',')}|${[...excludeTitles].sort().join(',')}`;
 
   if (activeRequestPromise && activeRequestKey === requestKey) {
     return activeRequestPromise;
@@ -145,7 +147,7 @@ export async function getRecommendations(
       const response = await fetch('/api/recommendations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedBooks, excludeTitles, focus }),
+        body: JSON.stringify({ seedBooks, excludeTitles, focus, count }),
       });
 
       if (response.ok) {
@@ -174,7 +176,7 @@ export async function getRecommendations(
     }
 
     return {
-      recommendations: generateFallbackRecommendations(seedBooks, excludeTitles, focus),
+      recommendations: generateFallbackRecommendations(seedBooks, excludeTitles, focus, count),
       source: 'fallback',
       errorCode,
     };

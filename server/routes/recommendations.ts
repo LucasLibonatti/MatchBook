@@ -125,7 +125,8 @@ function normalizeKey(value: string): string {
 function buildSystemPrompt(
   seedBooks: SeedBookInput[],
   excludeTitles: string[],
-  focus: CurationFocus
+  focus: CurationFocus,
+  count: number
 ): string {
   const seedsDescription = seedBooks
     .map((b, i) => {
@@ -139,23 +140,27 @@ function buildSystemPrompt(
 
   const excludeList =
     excludeTitles.length > 0
-      ? `\nEXCLUIR: ${excludeTitles.slice(0, 50).join(', ')}`
+      ? `\nEXCLUIR: ${excludeTitles.slice(0, 60).join(', ')}`
       : '';
 
   const focusDirective = FOCUS_DIRECTIVES[focus] || FOCUS_DIRECTIVES.balanced;
+  const balanceRule =
+    count <= 5
+      ? `EQUILÍBRIO: Cubra TODOS os ${seedBooks.length} livros-base (pelo menos 1–2 recomendações para cada livro-base, NUNCA foque em só 1).`
+      : `EQUILÍBRIO: Se houver 3 livros-base, distribua 3 para o #1, 3 para o #2, 3 para o #3 e 1 ponte (NUNCA foque em só 1 livro).`;
 
-  return `Curador literário sênior do MatchBook. Recomende 10 livros REAIS e publicados com alta afinidade aos livros-base abaixo.
+  return `Curador literário sênior do MatchBook. Recomende EXATAMENTE ${count} livros REAIS e publicados com alta afinidade aos livros-base abaixo.
 
 BASE:
 ${seedsDescription}${excludeList}
 
 REGRAS:
-1. EQUILÍBRIO: Se houver 3 livros-base, distribua 3 para o #1, 3 para o #2, 3 para o #3 e 1 ponte (NUNCA foque em só 1 livro).
-2. DIVERSIDADE: Máximo 1 livro por autor (10 autores diferentes) e evite autores da base.
+1. ${balanceRule}
+2. DIVERSIDADE: Máximo 1 livro por autor (${count} autores diferentes) e evite autores da base.
 3. COERÊNCIA: Respeite o domínio de cada base sem cruzamentos aleatórios.
 4. ${focusDirective}
 
-SAÍDA (APENAS JSON: {"recommendations":[...]}):
+SAÍDA (APENAS JSON: {"recommendations":[...]} com EXATAMENTE ${count} itens):
 Campos por item: title (PT se existir), originalTitle (idioma original), author, publishedYear (number), pageCount (number), categories (2-3 gêneros curtos PT), matchPercentage (84-99 desc), synopsis (320-480 chars PT, envolvente, sem spoilers), matchReason (1-2 frases citando 1+ livro base pelo nome), isbn (ISBN-13 ou "").`;
 }
 
@@ -176,7 +181,8 @@ function extractJson(content: string): { recommendations?: RawRecommendation[] }
 export function normalizeRecommendations(
   rawList: RawRecommendation[],
   seedBooks: SeedBookInput[],
-  excludeTitles: string[]
+  excludeTitles: string[],
+  maxCount = 10
 ): NormalizedRecommendation[] {
   const excludedKeys = new Set<string>([
     ...excludeTitles.map(normalizeKey),
@@ -259,7 +265,7 @@ export function normalizeRecommendations(
   const nonSeedAuthorBooks = candidates.filter((c) => !seedAuthors.has(normalizeKey(c.author)));
   const seedAuthorBooks = candidates.filter((c) => seedAuthors.has(normalizeKey(c.author))).slice(0, 1);
 
-  const finalResults = [...nonSeedAuthorBooks, ...seedAuthorBooks].slice(0, 10);
+  const finalResults = [...nonSeedAuthorBooks, ...seedAuthorBooks].slice(0, maxCount);
   return finalResults.sort((a, b) => b.matchPercentage - a.matchPercentage);
 }
 
@@ -328,7 +334,7 @@ async function callGroqModel(
 }
 
 recommendationsRoutes.post('/', async (c) => {
-  let body: { seedBooks?: SeedBookInput[]; excludeTitles?: string[]; focus?: CurationFocus };
+  let body: { seedBooks?: SeedBookInput[]; excludeTitles?: string[]; focus?: CurationFocus; count?: number };
   try {
     body = await c.req.json();
   } catch {
@@ -348,11 +354,15 @@ recommendationsRoutes.post('/', async (c) => {
   const excludeTitles = Array.isArray(body.excludeTitles)
     ? body.excludeTitles
         .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-        .slice(0, 100)
+        .slice(0, 120)
     : [];
 
   const validFocuses: CurationFocus[] = ['balanced', 'quick', 'classics', 'modern', 'hidden-gems'];
   const focus: CurationFocus = body.focus && validFocuses.includes(body.focus) ? body.focus : 'balanced';
+  const requestedCount =
+    typeof body.count === 'number' && Number.isFinite(body.count)
+      ? Math.min(10, Math.max(3, Math.round(body.count)))
+      : 10;
 
   const apiKey = getGroqKey();
   if (!apiKey) {
@@ -364,7 +374,8 @@ recommendationsRoutes.post('/', async (c) => {
     });
   }
 
-  const systemPrompt = buildSystemPrompt(seedBooks, excludeTitles, focus);
+  const systemPrompt = buildSystemPrompt(seedBooks, excludeTitles, focus, requestedCount);
+  const minRequired = Math.min(3, requestedCount);
   const candidateModels = PREFERRED_MODELS.slice(0, 2);
   let lastErrorCode = 'GROQ_ERROR';
   let sawModelNotFound = false;
@@ -372,8 +383,8 @@ recommendationsRoutes.post('/', async (c) => {
   for (const model of candidateModels) {
     try {
       const raw = await callGroqModel(model, systemPrompt, apiKey);
-      const recommendations = normalizeRecommendations(raw, seedBooks, excludeTitles);
-      if (recommendations.length >= 5) {
+      const recommendations = normalizeRecommendations(raw, seedBooks, excludeTitles, requestedCount);
+      if (recommendations.length >= minRequired) {
         return c.json({ recommendations, source: 'groq', model });
       }
     } catch (err) {
@@ -400,8 +411,8 @@ recommendationsRoutes.post('/', async (c) => {
     if (fallbackDiscovered) {
       try {
         const raw = await callGroqModel(fallbackDiscovered, systemPrompt, apiKey);
-        const recommendations = normalizeRecommendations(raw, seedBooks, excludeTitles);
-        if (recommendations.length >= 5) {
+        const recommendations = normalizeRecommendations(raw, seedBooks, excludeTitles, requestedCount);
+        if (recommendations.length >= minRequired) {
           return c.json({ recommendations, source: 'groq', model: fallbackDiscovered });
         }
       } catch (err) {
