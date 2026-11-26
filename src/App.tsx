@@ -23,9 +23,16 @@ function MatchBookApp() {
     [saveSeeds]
   );
 
-  const handleSwapBooks = useCallback(() => {
+  // Clicking the MatchBook logo goes back to the initial screen while keeping the chosen books
+  const handleGoHome = useCallback(() => {
     setView('onboarding');
   }, []);
+
+  // Clicking "Trocar 3 Livros" clears the 3 slots so the user starts fresh
+  const handleSwapBooks = useCallback(() => {
+    saveSeeds([]);
+    setView('onboarding');
+  }, [saveSeeds]);
 
   const handleOpenLibrary = useCallback(() => {
     setIsLibraryOpen(true);
@@ -40,13 +47,14 @@ function MatchBookApp() {
       <Header
         showSwapBooks={view === 'arena'}
         onSwapBooks={handleSwapBooks}
-        onGoHome={handleSwapBooks}
+        onGoHome={handleGoHome}
         onOpenLibrary={handleOpenLibrary}
       />
 
       <main className="flex-1 flex flex-col overflow-hidden">
         {view === 'onboarding' && (
           <Onboarding
+            key={seeds.length === 0 ? 'empty' : 'filled'}
             initialSeeds={seeds}
             onComplete={handleOnboardingComplete}
           />

@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, X, Sparkles, Loader2, Book, Check } from 'lucide-react';
+import { Search, X, Sparkles, Loader2, Book, Check, Clock } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { SeedBook, BookSearchResult } from '../types/book';
 import { searchCuratedBooks, CURATED_BOOKS } from '../data/curatedBooks';
 import { searchBooksForOnboarding } from '../services/bookCoverService';
 import { EditorialCover } from './EditorialCover';
+import { useMatchBook } from '../hooks/useMatchBook';
 
 interface OnboardingProps {
   initialSeeds?: SeedBook[];
@@ -22,6 +23,7 @@ const QUICK_SUGGESTIONS = [
 ];
 
 export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
+  const { recentSeeds, recordRecentSeeds, removeRecentSeed } = useMatchBook();
   const [selectedBooks, setSelectedBooks] = useState<SeedBook[]>(initialSeeds);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<BookSearchResult[]>([]);
@@ -41,47 +43,50 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
     };
   }, []);
 
-  const triggerSearch = useCallback((query: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (abortControllerRef.current) abortControllerRef.current.abort();
+  const triggerSearch = useCallback(
+    (query: string) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
 
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setSearchResults([]);
-      setShowDropdown(false);
-      setIsSearching(false);
-      setFocusedIndex(-1);
-      return;
-    }
-
-    const curatedResults: BookSearchResult[] = searchCuratedBooks(trimmed).map((b) => ({
-      ...b,
-      source: 'curated',
-    }));
-
-    setSearchResults(curatedResults);
-    setShowDropdown(true);
-    setFocusedIndex(-1);
-    setIsSearching(true);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const apiResults = await searchBooksForOnboarding(trimmed, curatedResults, controller.signal);
-        if (!controller.signal.aborted) {
-          setSearchResults(apiResults);
-        }
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsSearching(false);
-        }
+      const trimmed = query.trim();
+      if (!trimmed) {
+        setSearchResults([]);
+        setShowDropdown(recentSeeds.length > 0 && document.activeElement === inputRef.current);
+        setIsSearching(false);
+        setFocusedIndex(-1);
+        return;
       }
-    }, 320);
-  }, []);
+
+      const curatedResults: BookSearchResult[] = searchCuratedBooks(trimmed).map((b) => ({
+        ...b,
+        source: 'curated',
+      }));
+
+      setSearchResults(curatedResults);
+      setShowDropdown(true);
+      setFocusedIndex(-1);
+      setIsSearching(true);
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const apiResults = await searchBooksForOnboarding(trimmed, curatedResults, controller.signal);
+          if (!controller.signal.aborted) {
+            setSearchResults(apiResults);
+          }
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') return;
+        } finally {
+          if (!controller.signal.aborted) {
+            setIsSearching(false);
+          }
+        }
+      }, 320);
+    },
+    [recentSeeds.length]
+  );
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,14 +98,19 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
   );
 
   const handleInputFocus = useCallback(() => {
-    if (searchResults.length > 0 || searchQuery.trim()) {
+    if (searchResults.length > 0 || searchQuery.trim() || recentSeeds.length > 0) {
       setShowDropdown(true);
     }
-  }, [searchResults.length, searchQuery]);
+  }, [searchResults.length, searchQuery, recentSeeds.length]);
 
   const handleInputBlur = useCallback(() => {
     setTimeout(() => setShowDropdown(false), 180);
   }, []);
+
+  const isHistoryMode = !searchQuery.trim() && recentSeeds.length > 0;
+  const dropdownItems: BookSearchResult[] = isHistoryMode
+    ? recentSeeds.map((b) => ({ ...b, source: 'curated' as const }))
+    : searchResults;
 
   const handleSelectBook = useCallback(
     (book: BookSearchResult) => {
@@ -114,16 +124,13 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
         isbn: book.isbn,
       };
 
-      setSelectedBooks((prev) => {
-        const existingIndex = prev.findIndex((b) => b.id === seedBook.id);
-        if (existingIndex >= 0) {
-          return prev.filter((_, i) => i !== existingIndex);
-        }
-        if (prev.length < 3) {
-          return [...prev, seedBook];
-        }
-        return prev;
-      });
+      const alreadySelected = selectedBooks.some((b) => b.id === seedBook.id);
+      if (alreadySelected) {
+        setSelectedBooks((prev) => prev.filter((b) => b.id !== seedBook.id));
+      } else if (selectedBooks.length < 3) {
+        setSelectedBooks((prev) => [...prev, seedBook]);
+        recordRecentSeeds([seedBook]);
+      }
 
       setSearchQuery('');
       setSearchResults([]);
@@ -132,17 +139,17 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
       setIsSearching(false);
       inputRef.current?.blur();
     },
-    []
+    [selectedBooks, recordRecentSeeds]
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (!showDropdown || searchResults.length === 0) return;
+      if (!showDropdown || dropdownItems.length === 0) return;
 
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          setFocusedIndex((prev) => Math.min(prev + 1, searchResults.length - 1));
+          setFocusedIndex((prev) => Math.min(prev + 1, dropdownItems.length - 1));
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -150,8 +157,8 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
           break;
         case 'Enter':
           e.preventDefault();
-          if (focusedIndex >= 0) {
-            handleSelectBook(searchResults[focusedIndex]);
+          if (focusedIndex >= 0 && dropdownItems[focusedIndex]) {
+            handleSelectBook(dropdownItems[focusedIndex]);
           }
           break;
         case 'Escape':
@@ -160,7 +167,7 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
           break;
       }
     },
-    [showDropdown, searchResults, focusedIndex, handleSelectBook]
+    [showDropdown, dropdownItems, focusedIndex, handleSelectBook]
   );
 
   const handleRemoveBook = useCallback((index: number) => {
@@ -177,20 +184,23 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
   );
 
   const handleSurpriseMe = useCallback(() => {
-    setSelectedBooks((prev) => {
-      const available = CURATED_BOOKS.filter((b) => !prev.some((s) => s.id === b.id));
-      const needed = 3 - prev.length;
-      if (needed <= 0 || available.length === 0) return prev;
-      const shuffled = [...available].sort(() => Math.random() - 0.5);
-      return [...prev, ...shuffled.slice(0, needed)];
-    });
+    const available = CURATED_BOOKS.filter((b) => !selectedBooks.some((s) => s.id === b.id));
+    const needed = 3 - selectedBooks.length;
+    if (needed <= 0 || available.length === 0) return;
+
+    const shuffled = [...available].sort(() => Math.random() - 0.5);
+    const picks = shuffled.slice(0, needed);
+    setSelectedBooks([...selectedBooks, ...picks]);
+    recordRecentSeeds(picks);
     setSearchQuery('');
     setSearchResults([]);
     setShowDropdown(false);
-  }, []);
+  }, [selectedBooks, recordRecentSeeds]);
 
   const canContinue = selectedBooks.length === 3;
   const showSuggestions = selectedBooks.length < 3 && !searchQuery.trim();
+  const shouldRenderDropdown =
+    showDropdown && (isHistoryMode || searchResults.length > 0 || Boolean(searchQuery.trim()));
 
   return (
     <div className="flex flex-col h-full w-full max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -237,7 +247,7 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
               autoComplete="off"
               aria-autocomplete="list"
               aria-controls="search-results"
-              aria-expanded={showDropdown && searchResults.length > 0}
+              aria-expanded={shouldRenderDropdown}
             />
             {isSearching ? (
               <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin" style={{ color: 'var(--accent-primary)' }} />
@@ -246,8 +256,8 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
                 type="button"
                 onClick={() => {
                   setSearchQuery('');
-                  triggerSearch('');
                   inputRef.current?.focus();
+                  triggerSearch('');
                 }}
                 className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-colors focus-ring"
                 style={{ color: 'var(--text-muted)' }}
@@ -259,7 +269,7 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
           </div>
 
           <AnimatePresence>
-            {showDropdown && (searchResults.length > 0 || searchQuery.trim()) && (
+            {shouldRenderDropdown && (
               <motion.div
                 ref={dropdownRef}
                 id="search-results"
@@ -275,59 +285,99 @@ export function Onboarding({ initialSeeds = [], onComplete }: OnboardingProps) {
                 transition={{ duration: 0.15 }}
                 role="listbox"
               >
-                {searchResults.map((book, index) => {
+                {isHistoryMode && (
+                  <div
+                    className="px-4 py-2.5 border-b flex items-center gap-2 text-xs font-mono uppercase tracking-wider"
+                    style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Últimos livros escolhidos</span>
+                  </div>
+                )}
+
+                {dropdownItems.map((book, index) => {
                   const isSelected = selectedBooks.some((s) => s.id === book.id);
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={book.id}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handleSelectBook(book);
-                      }}
-                      onClick={(e) => e.preventDefault()}
-                      className={clsx(
-                        'w-full px-4 py-3.5 text-left flex items-center gap-3 transition-colors group',
-                        focusedIndex === index ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--bg-elevated)]'
-                      )}
                       role="option"
                       aria-selected={focusedIndex === index}
-                      style={{ color: 'var(--text-primary)' }}
+                      className={clsx(
+                        'w-full flex items-center transition-colors',
+                        focusedIndex === index ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--bg-elevated)]'
+                      )}
                     >
-                      <div
-                        className="relative w-12 h-18 flex-shrink-0 rounded overflow-hidden flex items-center justify-center"
-                        style={{ backgroundColor: 'var(--bg-elevated)' }}
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectBook(book);
+                        }}
+                        onClick={(e) => e.preventDefault()}
+                        className="flex-1 min-w-0 px-4 py-3 text-left flex items-center gap-3 cursor-pointer"
+                        style={{ color: 'var(--text-primary)' }}
                       >
-                        {book.coverUrl ? (
-                          <img src={book.coverUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
-                        ) : (
-                          <Book className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
-                        )}
-                        {isSelected && (
-                          <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-                            <Check className="w-5 h-5 text-white" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{book.title}</p>
-                        <p className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>
-                          {book.author}
-                        </p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {book.categories.slice(0, 2).map((cat, catIndex) => (
-                            <span key={catIndex} className="editorial-pill text-[0.55rem]">
-                              {cat}
-                            </span>
-                          ))}
+                        {isHistoryMode ? (
+                          <Clock className="w-4 h-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
+                        ) : null}
+                        <div
+                          className={clsx(
+                            'relative flex-shrink-0 rounded overflow-hidden flex items-center justify-center',
+                            isHistoryMode ? 'w-8 h-12' : 'w-12 h-18'
+                          )}
+                          style={{ backgroundColor: 'var(--bg-elevated)' }}
+                        >
+                          {book.coverUrl ? (
+                            <img src={book.coverUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                          ) : (
+                            <Book className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                          )}
+                          {isSelected && (
+                            <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                              <Check className="w-4 h-4 text-white" />
+                            </div>
+                          )}
                         </div>
-                      </div>
-                      {isSelected && <Check className="w-5 h-5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />}
-                    </button>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{book.title}</p>
+                          <p className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>
+                            {book.author}
+                          </p>
+                          {!isHistoryMode && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {book.categories.slice(0, 2).map((cat, catIndex) => (
+                                <span key={catIndex} className="editorial-pill text-[0.55rem]">
+                                  {cat}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {isSelected && <Check className="w-5 h-5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />}
+                      </button>
+
+                      {isHistoryMode && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            removeRecentSeed(book.id);
+                          }}
+                          onClick={(e) => e.preventDefault()}
+                          className="mr-3 p-2 rounded-lg transition-colors hover:bg-black/10 dark:hover:bg-white/10 focus-ring cursor-pointer"
+                          style={{ color: 'var(--text-muted)' }}
+                          aria-label={`Remover ${book.title} do histórico`}
+                          title="Remover do histórico"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
 
-                {searchResults.length === 0 && searchQuery.trim() && !isSearching && (
+                {!isHistoryMode && searchResults.length === 0 && searchQuery.trim() && !isSearching && (
                   <div className="px-4 py-6 text-center" style={{ color: 'var(--text-muted)' }}>
                     <p className="text-sm">Nenhum resultado para &ldquo;{searchQuery}&rdquo;</p>
                   </div>

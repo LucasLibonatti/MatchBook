@@ -15,7 +15,7 @@ interface SwipeArenaProps {
   isModalOpen?: boolean;
 }
 
-const SWIPE_THROTTLE_MS = 160;
+const SWIPE_THROTTLE_MS = 260;
 
 const FOCUS_OPTIONS: Array<{ value: CurationFocus; label: string }> = [
   { value: 'balanced', label: 'Equilibrado' },

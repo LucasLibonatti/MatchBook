@@ -71,13 +71,13 @@ const CARD_VARIANTS: Variants = {
           scale: 0.82,
           y: 40,
           opacity: 0,
-          transition: { duration: 0.18 },
+          transition: { duration: 0.26 },
         }
       : {
-          x: custom.direction === 'right' ? 560 : -560,
-          y: 28,
+          x: custom.direction === 'right' ? 620 : -620,
+          y: 40,
           opacity: 0,
-          transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
+          transition: { duration: 0.52, ease: [0.22, 1, 0.36, 1] },
         },
 };
 
@@ -148,7 +148,7 @@ export function BookCard({
       initial={index === 0 ? 'initialActive' : 'initialBack'}
       animate={animateVariant}
       exit="exit"
-      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.8 }}
+      transition={{ type: 'spring', stiffness: 220, damping: 24, mass: 0.9 }}
       style={{
         transformOrigin: 'center center',
         x,

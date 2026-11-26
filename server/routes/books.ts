@@ -6,6 +6,7 @@ const GOOGLE_BOOKS_BASE = 'https://www.googleapis.com/books/v1/volumes';
 const OPEN_LIBRARY_BASE = 'https://openlibrary.org/search.json';
 const OPEN_LIBRARY_COVERS = 'https://covers.openlibrary.org/b/id';
 const OPEN_LIBRARY_ISBN = 'https://covers.openlibrary.org/b/isbn';
+const ITUNES_SEARCH_BASE = 'https://itunes.apple.com/search';
 
 function getGoogleBooksKey(): string {
   return (process.env.GOOGLE_BOOKS_API_KEY || process.env.VITE_GOOGLE_BOOKS_API_KEY || '')
@@ -20,6 +21,16 @@ function upgradeGoogleBookCover(rawUrl: string): string {
     url += `${separator}fife=w800-h1200`;
   }
   return url;
+}
+
+function normalizeWords(value: string): string[] {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
 }
 
 /**
@@ -75,6 +86,69 @@ async function fetchGoogleVolumes(queryParams: string, signal?: AbortSignal): Pr
   }
 
   throw new Error(`Google Books HTTP ${response.status}`);
+}
+
+async function findAppleBooksCover(
+  titleQuery: string,
+  authorQuery: string,
+  country?: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  try {
+    const params = new URLSearchParams({
+      term: `${titleQuery} ${authorQuery}`.trim(),
+      media: 'ebook',
+      limit: '5',
+    });
+    if (country) {
+      params.set('country', country);
+    }
+
+    const res = await fetch(`${ITUNES_SEARCH_BASE}?${params}`, { signal });
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      results?: Array<{
+        trackName?: string;
+        artistName?: string;
+        artworkUrl100?: string;
+      }>;
+    };
+    const results = Array.isArray(data.results) ? data.results : [];
+    if (results.length === 0) return null;
+
+    const titleWords = normalizeWords(titleQuery);
+    const authorWords = normalizeWords(authorQuery);
+
+    // Rank candidates by title + author match so popular official editions win
+    const scored = results
+      .map((item) => {
+        const trackNorm = normalizeWords(item.trackName || '');
+        const artistNorm = normalizeWords(item.artistName || '');
+        const titleMatches = titleWords.filter((w) => trackNorm.includes(w)).length;
+        const authorMatches = authorWords.filter((w) => artistNorm.includes(w)).length;
+        return {
+          item,
+          titleMatches,
+          authorMatches,
+          score: titleMatches * 2 + authorMatches * 3,
+        };
+      })
+      .filter((entry) => entry.item.artworkUrl100 && (entry.titleMatches > 0 || entry.authorMatches > 0))
+      .sort((a, b) => b.score - a.score);
+
+    for (const entry of scored) {
+      const rawArt = entry.item.artworkUrl100;
+      if (!rawArt) continue;
+      const hdArt = rawArt.replace(/\/\d+x\d+bb\./i, '/600x900bb.');
+      if (await isValidCoverUrl(hdArt, signal)) {
+        return hdArt;
+      }
+    }
+  } catch {
+    // Ignore and fall back to next provider
+  }
+  return null;
 }
 
 async function findGoogleCover(query: string, signal?: AbortSignal): Promise<string | null> {
@@ -256,18 +330,31 @@ booksRoutes.get('/cover', async (c) => {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 7500);
+  const timeout = setTimeout(() => controller.abort(), 9000);
 
   try {
-    // 1. Google Books with localized title + author
+    // 1. Official popular edition HD cover from Apple Books BR
+    const appleBr = await findAppleBooksCover(title, author, 'br', controller.signal);
+    if (appleBr) return c.json({ coverUrl: appleBr });
+
+    // 2. Official global edition HD cover from Apple Books (originalTitle or localized title)
+    const appleGlobal = await findAppleBooksCover(
+      originalTitle || title,
+      author,
+      undefined,
+      controller.signal
+    );
+    if (appleGlobal) return c.json({ coverUrl: appleGlobal });
+
+    // 3. Google Books with localized title + author
     const googlePrimary = await findGoogleCover(`${title} ${author}`.trim(), controller.signal);
     if (googlePrimary) return c.json({ coverUrl: googlePrimary });
 
-    // 2. Open Library with localized title + author
+    // 4. Open Library with localized title + author
     const olPrimary = await findOpenLibraryCover(title, author, controller.signal);
     if (olPrimary) return c.json({ coverUrl: olPrimary });
 
-    // 3. If originalTitle differs, search both providers in original language (e.g. English/Spanish)
+    // 5. Original title search across Google Books & Open Library
     if (originalTitle && originalTitle.toLowerCase() !== title.toLowerCase()) {
       const googleOriginal = await findGoogleCover(`${originalTitle} ${author}`.trim(), controller.signal);
       if (googleOriginal) return c.json({ coverUrl: googleOriginal });
@@ -276,7 +363,7 @@ booksRoutes.get('/cover', async (c) => {
       if (olOriginal) return c.json({ coverUrl: olOriginal });
     }
 
-    // 4. Open Library direct ISBN cover check
+    // 6. Open Library direct ISBN cover check
     if (isbn) {
       const cleanIsbn = isbn.replace(/[^0-9Xx]/g, '');
       if (cleanIsbn) {

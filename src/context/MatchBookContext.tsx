@@ -6,6 +6,9 @@ import {
   setTheme as persistTheme,
   getSeeds,
   setSeeds as persistSeeds,
+  getRecentSeeds,
+  addRecentSeeds,
+  removeRecentSeedById,
   getMatches,
   setMatches as persistMatches,
   getSwipes,
@@ -17,6 +20,7 @@ import {
 export function MatchBookProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme());
   const [seeds, setSeedsState] = useState<SeedBook[]>(() => getSeeds());
+  const [recentSeeds, setRecentSeedsState] = useState<SeedBook[]>(() => getRecentSeeds());
   const [matches, setMatchesState] = useState<MatchBook[]>(() => getMatches());
   const [excludedTitles, setExcludedTitlesState] = useState<string[]>(() => getExcludedTitles());
 
@@ -32,9 +36,21 @@ export function MatchBookProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const recordRecentSeeds = useCallback((books: SeedBook[]) => {
+    if (books.length === 0) return;
+    setRecentSeedsState(addRecentSeeds(books));
+  }, []);
+
+  const removeRecentSeed = useCallback((bookId: string) => {
+    setRecentSeedsState(removeRecentSeedById(bookId));
+  }, []);
+
   const saveSeeds = useCallback((nextSeeds: SeedBook[]) => {
     setSeedsState(nextSeeds);
     persistSeeds(nextSeeds);
+    if (nextSeeds.length > 0) {
+      setRecentSeedsState(addRecentSeeds(nextSeeds));
+    }
   }, []);
 
   const addExcluded = useCallback((title: string) => {
@@ -107,6 +123,9 @@ export function MatchBookProvider({ children }: { children: ReactNode }) {
         toggleTheme,
         seeds,
         saveSeeds,
+        recentSeeds,
+        recordRecentSeeds,
+        removeRecentSeed,
         matches,
         excludedTitles,
         likeBook,

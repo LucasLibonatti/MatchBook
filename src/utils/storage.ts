@@ -3,11 +3,23 @@ import type { SeedBook, BookRecommendation, MatchBook, SwipeAction } from '../ty
 const STORAGE_KEYS = {
   THEME: 'matchbook_theme',
   SEEDS: 'matchbook_seeds_v2',
+  RECENT_SEEDS: 'matchbook_recent_seeds_v1',
   MATCHES: 'matchbook_matches_v2',
   SWIPES: 'matchbook_swipes_v2',
-  COVERS_CACHE: 'matchbook_covers_cache_v4',
+  COVERS_CACHE: 'matchbook_covers_cache_v5',
   EXCLUDED_TITLES: 'matchbook_excluded_titles_v2',
 } as const;
+
+const MAX_RECENT_SEEDS = 5;
+
+function normalizeBookIdentity(title: string, author: string): string {
+  return `${title}-${author}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
 
 export function getTheme(): 'light' | 'dark' {
   try {
@@ -44,6 +56,54 @@ export function setSeeds(seeds: SeedBook[]): void {
   } catch {
     // Ignore
   }
+}
+
+export function getRecentSeeds(): SeedBook[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEYS.RECENT_SEEDS);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT_SEEDS) : [];
+    }
+  } catch {
+    // Ignore
+  }
+  return [];
+}
+
+export function setRecentSeeds(books: SeedBook[]): void {
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.RECENT_SEEDS,
+      JSON.stringify(books.slice(0, MAX_RECENT_SEEDS))
+    );
+  } catch {
+    // Ignore
+  }
+}
+
+export function addRecentSeeds(books: SeedBook[]): SeedBook[] {
+  const existing = getRecentSeeds();
+  const seen = new Set<string>();
+  const merged: SeedBook[] = [];
+
+  for (const book of [...books, ...existing]) {
+    if (!book || !book.title) continue;
+    const identity = normalizeBookIdentity(book.title, book.author || '');
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    merged.push(book);
+    if (merged.length >= MAX_RECENT_SEEDS) break;
+  }
+
+  setRecentSeeds(merged);
+  return merged;
+}
+
+export function removeRecentSeedById(bookId: string): SeedBook[] {
+  const next = getRecentSeeds().filter((b) => b.id !== bookId);
+  setRecentSeeds(next);
+  return next;
 }
 
 export function getMatches(): MatchBook[] {

@@ -12,6 +12,9 @@ export interface MatchBookContextValue {
   toggleTheme: () => void;
   seeds: SeedBook[];
   saveSeeds: (nextSeeds: SeedBook[]) => void;
+  recentSeeds: SeedBook[];
+  recordRecentSeeds: (books: SeedBook[]) => void;
+  removeRecentSeed: (bookId: string) => void;
   matches: MatchBook[];
   excludedTitles: string[];
   likeBook: (book: BookRecommendation) => void;
